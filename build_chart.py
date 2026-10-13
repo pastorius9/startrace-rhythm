@@ -193,43 +193,46 @@ def add_vocal(out, hard):
             break
         held = [(st, en, l) for st, en, l in ((n[0], n[0] + n[2], n[1]) for n in out if len(n) > 2) if st - 0.05 <= tb <= en + 0.05]
         if held:
-            if hard and abs(tb - held[0][0]) > 1e-3:
-                out.append([round(float(tb), 3), (held[0][2] + 2) % 4])
+            if hard and abs(tb - held[0][0]) > 1e-3:   # the free thumb alternates its two lanes
+                free = (0, 1) if held[0][2] >= 2 else (2, 3)
+                out.append([round(float(tb), 3), free[k % 2]])
         else:
             out.append([round(float(tb), 3), 1 + i % 2]); i += 1
     return sorted(out, key=lambda n: (n[0], n[1]))
 
 
+THUMB_GAP = 0.15  # one thumb can't tap faster than this (s)
+
+
 def hand_split(out):
-    """Playability: while a long note is held with one hand (lanes 0-1 = left, 2-3 = right), every other
-    note in its span goes to the other hand, on the matching finger. A note with no free hand is dropped."""
+    """Two-thumb playability (mobile): lanes 0-1 are the left thumb, 2-3 the right.
+    - notes at the same moment go one per thumb,
+    - while a thumb holds a long note, other notes go to the other thumb,
+    - one thumb never gets two notes closer than THUMB_GAP.
+    A note that breaks a rule moves to the other thumb's matching lane, or is dropped if that thumb is busy."""
     hand = lambda l: l // 2
-    other = lambda l: l + 2 if l < 2 else l - 2
-    holds = sorted([n for n in out if len(n) > 2], key=lambda n: n[0])
-    kept_holds = []
-    for h in holds:  # a long note overlapping one on the same hand moves to the other hand
-        busy = [k for k in kept_holds if k[0] < h[0] + h[2] and h[0] < k[0] + k[2]]
-        if any(hand(k[1]) == hand(h[1]) for k in busy):
-            h = [h[0], other(h[1]), h[2]]
-        if any(hand(k[1]) == hand(h[1]) for k in busy):
-            continue
-        kept_holds.append(h)
-    res = list(kept_holds)
-    for n in out:
-        if len(n) > 2:
-            continue
+    mirror = lambda l: l + 2 if l < 2 else l - 2
+    free_at = [-9.0, -9.0]   # time each thumb can take its next note
+    used_at = [None, None]   # time of the thumb's latest note (to keep chords one per thumb)
+    res = []
+    # long notes first at equal times, so a chord's tap is placed around the hold
+    for n in sorted(out, key=lambda n: (n[0], 0 if len(n) > 2 else 1, n[1])):
+        t = n[0]
+        ok = lambda h: t >= free_at[h] - 1e-6 and used_at[h] != t
+        h = hand(n[1])
         lane = n[1]
-        active = [h for h in kept_holds if h[0] - 1e-3 <= n[0] <= h[0] + h[2] + 1e-3 and abs(h[0] - n[0]) > 1e-3]
-        if any(hand(h[1]) == hand(lane) for h in active):
-            lane = other(lane)
-        if any(hand(h[1]) == hand(lane) for h in active):
-            continue
-        res.append([n[0], lane])
-    seen, final = set(), []
-    for n in sorted(res, key=lambda n: (n[0], n[1])):
-        if (n[0], n[1]) not in seen:
-            seen.add((n[0], n[1])); final.append(n)
-    return final
+        if not ok(h):
+            h, lane = 1 - h, mirror(n[1])
+            if not ok(h):
+                continue
+        if len(n) > 2:
+            res.append([t, lane, n[2]])
+            free_at[h] = t + n[2] + 0.12      # release, then a moment before the next tap
+        else:
+            res.append([t, lane])
+            free_at[h] = t + THUMB_GAP
+        used_at[h] = t
+    return res
 
 
 def add_rush(out, hard):
@@ -240,10 +243,17 @@ def add_rush(out, hard):
     r0 = b0 + args.rush_from * 4 * BEAT
     # clear the rush window (up to, not including, the drop downbeat) and any long note reaching into it
     out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3)]
-    t, i = r0, 0
-    while t < go_t - 1e-3:
+    holds = [n for n in out if len(n) > 2]
+    t, i, j = r0, 0, 0
+    while t < go_t - 0.15 - 1e-3:            # leave both thumbs free for the Go chord
+        held = next((h for h in holds if h[0] - 1e-3 <= t <= h[0] + h[2] + 0.12), None)
+        if held:   # one thumb holds the sung note: the other alternates its two lanes in eighths
+            free = (0, 1) if held[1] >= 2 else (2, 3)
+            out.append([round(float(t), 3), free[j % 2]]); j += 1
+            t += STEP
+            continue
         out.append([round(float(t), 3), 1 + i % 2])
-        fast = hard and t >= r0 + 4 * BEAT - 1e-3   # HARD: sixteenths after the first bar
+        fast = hard and t >= r0 + 4 * BEAT - 1e-3   # HARD: sixteenths (thumbs alternate) after the first bar
         t += STEP / 2 if fast else STEP
         i += 1
     out += [[round(float(go_t), 3), 0], [round(float(go_t), 3), 3]]
