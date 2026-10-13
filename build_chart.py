@@ -5,6 +5,7 @@ usage: python build_chart.py <audio> <out.json> [--start SEC] [--end SEC] [--hyp
 MV:    --end 205 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.4:141.1 --finish 206
 album: --end 176 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.48:141.18 --vocal-shift 0.077
        (both: --drums <drum track> --drum-bars 29:32,48:56,69:72,149:150; the drum track is separated with an MDX-Net drum model)
+       touch specials and DRS zones (MV): --sweep-bars 39,47,55,71,127 --flick-bars 40,48,72,128 --drs-bars 40:44,72:76,108:112,132:136,144:148
 (3:26 is when the car crosses the line in the MV; sung long notes run 2:00.5-2:21: "woah", then "This is the time of our lives")
 
 Star Trace sits at 175 BPM (beat 0.342857 s). Onset autocorrelation peaks at the
@@ -31,6 +32,9 @@ ap.add_argument("--vocal-range", default=None, help="START:END seconds where lon
 ap.add_argument("--vocal-shift", type=float, default=0.0, help="seconds this audio runs behind the MV audio (album: 0.077)")
 ap.add_argument("--dance-bars", default=None, help="START:END bar indices of the x1.5 dance break, e.g. 48:56")
 ap.add_argument("--drums", default=None, help="drum track separated from the same audio (same timing), for --drum-bars")
+ap.add_argument("--sweep-bars", default="", help="bars whose last beat is a SWEEP: four notes across the lanes in one slide, e.g. 39,47,55,71,127")
+ap.add_argument("--flick-bars", default="", help="bars whose downbeat is a FLICK note (touch and swipe up), e.g. 40,48,72,128; the Go chord is always one")
+ap.add_argument("--drs-bars", default="", help="START:END bar ranges of DRS zones (glowing notes; clear them all for a bonus), e.g. 40:44,72:76")
 ap.add_argument("--drum-bars", default="", help="bar ranges whose notes follow the drum hits, e.g. 29:32,48:56,69:72,149:150 "
                 "(the --rush-from bars before Go always do when --drums is given)")
 args = ap.parse_args()
@@ -146,7 +150,7 @@ def build(lv):
         double = (hyper and (lv > EASY or bar % 2 == 0)) or (lv == HYPER and bar % 2 == 0 and e_norm[bar] > 0.7)
         if kind == "q" and s % PER_BAR == 0 and double:
             out.append([round(float(t), 3), (3 - lane) if 3 - lane != lane else (lane + 2) % 4])
-    return hand_split(add_rush(add_vocal(add_drum_bars(add_holds(out, lv), lv), lv), lv))
+    return add_specials(hand_split(add_rush(add_vocal(add_drum_bars(add_holds(out, lv), lv), lv), lv)), lv)
 
 
 # Sung syllables in MV time (s): (start, end, midi). end None = short syllable -> tap.
@@ -428,13 +432,63 @@ if args.dance_bars:
 if hyper_t is not None:
     zones.append({"t0": round(float(go_t), 3), "t1": round(dur + 5, 3), "mul": 2, "kind": "hyper"})
 
+# ---------- touch specials: SWEEP (one-finger slide across the lanes) and FLICK (touch, swipe up)
+# Special notes carry a 4th field: [t, lane, 0, "s"] sweep, [t, lane, 0, "f"] flick.
+def bars_arg(a):
+    return [int(x) for x in a.split(",") if x.strip()]
+
+
+def add_specials(out, lv):
+    """Sweeps: the last beat of a --sweep-bars bar becomes 0-1-2-3 (or 3-2-1-0) in sixteenths (EASY: eighths over
+    the last two beats), played by sliding one finger across. Flicks: the downbeat of a --flick-bars bar (and the Go
+    chord) is a note you touch and flick upward. Notes around them are cleared so the thumbs are free."""
+    S16 = BEAT / 4
+    flick_t = {round(float(bar_t(b)), 3) for b in bars_arg(args.flick_bars) if bar_t(b) <= end}
+    for i, b in enumerate(bars_arg(args.sweep_bars)):
+        down = bar_t(b + 1)
+        if down > end + 1e-3:
+            continue
+        steps = (-8, -6, -4, -2) if lv == EASY else (-4, -3, -2, -1)
+        ts = [round(float(down + k * S16), 3) for k in steps]
+        lanes = (0, 1, 2, 3) if i % 2 == 0 else (3, 2, 1, 0)
+        w0, w1 = ts[0] - THUMB_GAP, ts[-1]
+        keep = []
+        for n in out:
+            if len(n) > 2 and n[2] > 0 and n[0] < w1 and n[0] + n[2] + 0.12 > w0:
+                if n[0] < w0 - 0.3:                    # a long note running into the sweep ends before it
+                    keep.append([n[0], n[1], round(w0 - 0.12 - n[0], 3)] + n[3:])
+                continue
+            if w0 - 1e-3 < n[0] < w1 + 1e-3:
+                continue
+            # downbeat right after: only the thumb the sweep did not end on (its last two lanes are one thumb)
+            if abs(n[0] - down) < 1e-3 and n[1] // 2 == lanes[-1] // 2:
+                continue
+            keep.append(n)
+        out = keep + [[t, l, 0, "s"] for t, l in zip(ts, lanes)]
+        if round(float(down), 3) in flick_t and not any(abs(n[0] - down) < 1e-3 for n in out):
+            out.append([round(float(down), 3), 1 if lanes[-1] >= 2 else 2])   # the flick on the free thumb
+    for t in flick_t | ({round(float(go_t), 3)} if go_t is not None else set()):
+        here = [n for n in out if abs(n[0] - t) < 1e-3 and len(n) == 2]
+        for n in here:
+            n += [0, "f"]
+    return sorted(out, key=lambda n: (n[0], n[1]))
+
+
+drs = []
+for rng in [r for r in args.drs_bars.split(",") if r.strip()]:
+    a_, b_ = (int(x) for x in rng.split(":"))
+    if bar_t(a_) < end:
+        drs.append({"t0": round(float(bar_t(a_) - 0.05), 3), "t1": round(float(min(bar_t(b_), end + 0.5) - 0.05), 3)})
+
 charts = {name: build(lv) for name, lv in LEVELS}
 for name, c in charts.items():
     ts = sorted({n[0] for n in c})
-    nh = sum(1 for n in c if len(n) > 2)
-    print(f"{name}: {len(c)} notes ({nh} long), {len(c) / (ts[-1] - ts[0]):.2f} nps, {ts[0]:.2f}-{ts[-1]:.2f}s, lanes {np.bincount([n[1] for n in c])}")
+    nh = sum(1 for n in c if len(n) > 2 and n[2] > 0)
+    ns, nf = sum(1 for n in c if n[3:] == ["s"]), sum(1 for n in c if n[3:] == ["f"])
+    print(f"{name}: {len(c)} notes ({nh} long, {ns} sweep, {nf} flick), {len(c) / (ts[-1] - ts[0]):.2f} nps, {ts[0]:.2f}-{ts[-1]:.2f}s, lanes {np.bincount([n[1] for n in c])}")
 json.dump({"bpm": args.bpm, "beat": round(BEAT, 6), "b0": round(float(b0), 4), "dur": round(dur, 3),
            "hyper": round(float(go_t), 3) if go_t is not None else None,
            "zones": zones,
+           "drs": drs,
            "finish": args.finish,
            **charts}, open(args.out, "w"), separators=(",", ":"))
