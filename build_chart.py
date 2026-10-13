@@ -4,6 +4,7 @@ usage: python build_chart.py <audio> <out.json> [--start SEC] [--end SEC] [--hyp
 
 MV:    --end 205 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.4:141.1 --finish 206
 album: --end 176 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.48:141.18 --vocal-shift 0.077
+       (both: --drums <drum track> --drum-bars 29:32,48:56,69:72,149:150; the drum track is separated with an MDX-Net drum model)
 (3:26 is when the car crosses the line in the MV; sung long notes run 2:00.5-2:21: "woah", then "This is the time of our lives")
 
 Star Trace sits at 175 BPM (beat 0.342857 s). Onset autocorrelation peaks at the
@@ -29,6 +30,9 @@ ap.add_argument("--rush-from", type=int, default=None, help="bar index where the
 ap.add_argument("--vocal-range", default=None, help="START:END seconds where long notes follow the sung syllables (the 2:00.5 woah section)")
 ap.add_argument("--vocal-shift", type=float, default=0.0, help="seconds this audio runs behind the MV audio (album: 0.077)")
 ap.add_argument("--dance-bars", default=None, help="START:END bar indices of the x1.5 dance break, e.g. 48:56")
+ap.add_argument("--drums", default=None, help="drum track separated from the same audio (same timing), for --drum-bars")
+ap.add_argument("--drum-bars", default="", help="bar ranges whose notes follow the drum hits, e.g. 29:32,48:56,69:72,149:150 "
+                "(the --rush-from bars before Go always do when --drums is given)")
 args = ap.parse_args()
 
 y, sr = librosa.load(args.audio, sr=22050, mono=True)
@@ -142,7 +146,7 @@ def build(lv):
         double = (hyper and (lv > EASY or bar % 2 == 0)) or (lv == HYPER and bar % 2 == 0 and e_norm[bar] > 0.7)
         if kind == "q" and s % PER_BAR == 0 and double:
             out.append([round(float(t), 3), (3 - lane) if 3 - lane != lane else (lane + 2) % 4])
-    return hand_split(add_rush(add_vocal(add_dance(add_holds(out, lv), lv), lv), lv))
+    return hand_split(add_rush(add_vocal(add_drum_bars(add_holds(out, lv), lv), lv), lv))
 
 
 # Sung syllables in MV time (s): (start, end, midi). end None = short syllable -> tap.
@@ -245,106 +249,118 @@ def hand_split(out):
     return res
 
 
-def add_rush(out, lv):
-    """Build-up before "Go": fast, simple alternating taps on the two middle lanes, then a two-lane
-    chord on the outer lanes exactly when the x2 section starts."""
-    if args.rush_from is None or hyper_t is None:
-        return out
-    r0 = b0 + args.rush_from * 4 * BEAT
-    # clear the rush window (up to, not including, the drop downbeat) and any long note reaching into it
-    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3)]
-    holds = [n for n in out if len(n) > 2]
-    t, i, j = r0, 0, 0
-    while t < go_t - 0.15 - 1e-3:            # leave both thumbs free for the Go chord
-        held = next((h for h in holds if h[0] - 1e-3 <= t <= h[0] + h[2] + 0.12), None)
-        if held:   # one thumb holds the sung note: the other alternates its two lanes in eighths
-            free = (0, 1) if held[1] >= 2 else (2, 3)
-            out.append([round(float(t), 3), free[j % 2]]); j += 1
-            t += BEAT if lv == EASY else STEP
+# ---------- notes that follow the drums (fills, rolls, the dance break, the build-up before Go)
+DRUM_HIT = 9.0   # dB: a drum hit on a sixteenth = the loudness jump of its band right there
+BIG_HIT = 20.0   # dB: kick and snare both this loud on a beat -> a two-thumb chord
+_drum = None
+
+
+def drum_hits(t0, t1):
+    """Sixteenth-grid drum hits in [t0, t1) from the separated drum track: (time, step in bar, kind, dB jump, big).
+    kind 'K' = kick (lows lead) -> outer lanes, 'S' = snare / hats -> inner lanes."""
+    global _drum
+    if _drum is None:
+        yd, _ = librosa.load(args.drums, sr=sr, mono=True)
+        Sd = np.abs(librosa.stft(yd, n_fft=512, hop_length=32))
+        fd = librosa.fft_frequencies(sr=sr, n_fft=512)
+        bands = [20 * np.log10(Sd[(fd >= lo) & (fd < hi)].sum(0) + 1e-6) for lo, hi in ((30, 150), (200, 3000), (5000, 11000))]
+        _drum = (np.arange(Sd.shape[1]) * 32 / sr, bands)
+    td, bands = _drum
+    S16 = BEAT / 4
+    hits = []
+    for k in range(int(np.ceil((t0 - b0) / S16 - 1e-6)), int(np.ceil((t1 - b0) / S16 - 1e-6))):
+        t = b0 + k * S16
+        before, at = (td >= t - 0.045) & (td < t - 0.005), (td >= t - 0.01) & (td < t + 0.035)
+        if not at.any() or not before.any():
             continue
-        out.append([round(float(t), 3), 1 + i % 2])
-        if lv == EASY:      # beats, then eighths for the last bar before Go
-            t += STEP if t >= go_t - 4 * BEAT - 1e-3 else BEAT
-        else:               # HYPER: sixteenths (thumbs alternate) after the first bar
-            t += STEP / 2 if lv == HYPER and t >= r0 + 4 * BEAT - 1e-3 else STEP
-        i += 1
-    out += [[round(float(go_t), 3), 0], [round(float(go_t), 3), 3]]
+        jump = [e[at].max() - e[before].min() for e in bands]
+        if max(jump) >= DRUM_HIT:
+            hits.append((t, k % 16, "K" if jump[0] >= jump[1] else "S", max(jump), min(jump[0], jump[1]) >= BIG_HIT))
+    return hits
+
+
+def drum_notes(lv, t0, t1, busy=None):
+    """Notes on the drum hits in [t0, t1).
+    HYPER plays every hit (sixteenths, rolls alternate thumbs), NORMAL the hits on eighths,
+    EASY the hits on beats (eighths in a roll bar unless a thumb is holding). busy = (thumb, until): that thumb is
+    holding a long note. Lanes: kick on the outer lane, snare/hats inner; in roll bars the thumbs trill
+    outer lanes one beat, inner lanes the next; elsewhere each thumb swaps lanes every hit."""
+    hits = drum_hits(t0, t1)
+    per_bar = {}
+    bar_of = lambda t: int(np.floor((t - b0) / (4 * BEAT) + 1e-6))
+    for t, *_ in hits:
+        per_bar[bar_of(t)] = per_bar.get(bar_of(t), 0) + 1
+    picked = []
+    for t, st, kind, db, big in hits:
+        roll = per_bar[bar_of(t)] >= 12
+        if lv == HYPER or (lv == NORMAL and st % 2 == 0) or (lv == EASY and st % (2 if roll and not busy else 4) == 0):
+            picked.append((t, st, kind, big, roll))
+    last = [-9.0, -9.0]
+    if busy:
+        last[busy[0]] = busy[1] - THUMB_GAP           # that thumb is free again at busy[1]
+    prev_hand, prev_t, lane_at, notes = 1, -9.0, {}, []
+    for i, (t, st, kind, big, roll) in enumerate(picked):
+        free = [h for h in (0, 1) if t - last[h] >= THUMB_GAP - 1e-6]
+        if not free:
+            continue
+        gap_next = picked[i + 1][0] - t if i + 1 < len(picked) else 9.0
+        if big and lv > EASY and st % 4 == 0 and len(free) == 2 and t - prev_t >= 0.17 and gap_next >= 0.17:
+            pair = (0, 3) if kind == "K" else (1, 2)
+            notes += [[t, pair[0]], [t, pair[1]]]
+            last = [t, t]; prev_t = t
+            continue
+        want = 1 - prev_hand if t - prev_t < 0.3 else (0 if kind == "K" else 1)
+        h = want if want in free else free[0]
+        outer = kind == "K"
+        if roll and not busy:
+            outer = int(round((t - b0) / BEAT - st % 4 / 4)) % 2 == 0
+        elif lane_at.get(h):
+            outer = lane_at[h][1] in (1, 2)            # swap to the thumb's other lane
+        lane = (0 if outer else 1) if h == 0 else (3 if outer else 2)
+        notes.append([t, lane])
+        last[h] = t; prev_hand, prev_t = h, t; lane_at[h] = (t, lane)
+    return [[round(float(t), 3), int(l)] for t, l in notes]
+
+
+def bar_t(b):
+    return b0 + b * 4 * BEAT
+
+
+def add_drum_bars(out, lv):
+    """Fills, rolls and the dance break (--drum-bars): the notes there are the drum hits."""
+    if not args.drums or not args.drum_bars:
+        return out
+    for rng in args.drum_bars.split(","):
+        a_, b_ = (int(x) for x in rng.split(":"))
+        t0, t1 = bar_t(a_), min(bar_t(b_), end + 1e-3)
+        if t0 >= t1:
+            continue
+        out = [n for n in out if not (t0 - 1e-3 <= n[0] < t1 - 1e-3) and not (len(n) > 2 and n[0] < t1 and n[0] + n[2] > t0)]
+        out += drum_notes(lv, t0, t1)
     return sorted(out, key=lambda n: (n[0], n[1]))
 
 
-def add_dance(out, lv):
-    """Dance break (x1.5): a fresh, varied pattern instead of the plain beat stream.
-    First half (the groove): beats, offbeats and sixteenths picked by drum accents, lanes zig-zag between thumbs,
-    a two-thumb chord on the bar's loudest snare (beat 4). Second half (the kick build-up): short long notes with the
-    other thumb tapping, stairs, sixteenth zig-zag runs (HYPER) and a closing chord."""
-    if not args.dance_bars:
+def add_rush(out, lv):
+    """Build-up before "Go": the snare roll and fill, note for note on HYPER (the sung "lives~" long note
+    is cut where the roll starts so both thumbs are free); on NORMAL/EASY "lives~" stays held and the
+    other thumb plays the hits on eighths/beats. Then a two-lane chord on the outer lanes when the x2 section starts."""
+    if args.rush_from is None or hyper_t is None:
         return out
-    a_, b_ = (int(x) for x in args.dance_bars.split(":"))
-    t0, t1 = b0 + a_ * 4 * BEAT, b0 + b_ * 4 * BEAT
-    out = [n for n in out if not (t0 - 1e-3 <= n[0] < t1 - 1e-3) and not (len(n) > 2 and n[0] < t1 and n[0] + n[2] > t0)]
-    S16 = BEAT / 4
-    at = lambda bar, step: b0 + bar * 4 * BEAT + step * S16
-    acc = lambda bar, step: s16[int(round((at(bar, step) - b0) / S16))]
-    notes = []                                        # [t, lane] or [t, lane, dur]
-    half = (b_ - a_) // 2
-
-    # groove: pick steps by accent
-    gb = range(a_, a_ + half)
-    offs = [acc(b, st) for b in gb for st in (2, 6, 10, 14)]
-    odds = [acc(b, st) for b in gb for st in range(1, 16, 2)]
-    off_cut = np.quantile(offs, 1 - (0.2, 0.5, 1.0)[lv]) if lv else np.quantile(offs, 0.85)
-    odd_cut = np.quantile(odds, 1 - (0.0, 0.1, 0.35)[lv]) if lv else np.inf
-    motifs = [(0, 2, 1, 3), (3, 1, 2, 0), (1, 3, 0, 2), (2, 0, 3, 1), (0, 3, 1, 2), (3, 0, 2, 1)]
-    for bi, b in enumerate(gb):
-        chord = lv > EASY or bi % 2 == 1
-        steps = []
-        for st in range(16):
-            if chord and st in (11, 13):
-                continue                              # both thumbs are on the chord
-            if st % 4 == 0 or (st % 2 == 0 and acc(b, st) >= off_cut) or (st % 2 and acc(b, st) >= odd_cut):
-                steps.append(st)
-        for beat in range(4):
-            mot = motifs[(bi * 4 + beat) % len(motifs)]
-            for j, st in enumerate([x for x in steps if beat * 4 <= x < beat * 4 + 4]):
-                if chord and st == 12:
-                    pair = (1, 2) if bi % 2 == 0 else (0, 3)
-                    notes += [[at(b, st), pair[0]], [at(b, st), pair[1]]]
-                    continue
-                notes.append([at(b, st), mot[j % 4]])
-
-    # build-up: hand-made figures (step, lane, hold steps)
-    stair_up, stair_dn = [0, 1, 2, 3, 2, 1, 0, 1], [3, 2, 1, 0, 1, 2, 3, 2]
-    for bi, b in enumerate(range(a_ + half, b_)):
-        side = bi // 2 % 2                            # which thumb holds: left, then right
-        hl, fl = (1, (2, 3)) if side == 0 else (2, (1, 0))
-        if bi % 2 == 0:                               # a long note with the other thumb tapping
-            hold = 6
-            notes.append([at(b, 0), hl if lv == EASY else (0 if side == 0 else 3), hold * S16])
-            taps = {EASY: [], NORMAL: [4], HYPER: [2, 4, 6]}[lv]
-            notes += [[at(b, st), fl[k % 2]] for k, st in enumerate(taps)]
-            tail = {EASY: [8, 12], NORMAL: [8, 10, 12, 14], HYPER: [8, 10, 12, 13, 14, 15]}[lv]
-            seq = stair_up if side == 0 else stair_dn
-            notes += [[at(b, st), seq[k % 8] if lv < HYPER or st % 2 == 0 else (0, 2, 1, 3)[k % 4]]
-                      for k, st in enumerate(tail)]
-        else:
-            last = b == b_ - 1
-            if lv == EASY:
-                run = [(0, 3), (4, 2), (8, 1), (12, 0)] if side == 0 else [(0, 0), (4, 1), (8, 2)]
-            elif lv == NORMAL:
-                seq = stair_dn if side == 0 else stair_up
-                run = [(st, seq[k]) for k, st in enumerate(range(0, 16, 2))]
-            else:                                     # sixteenth zig-zag, then eighth stairs
-                zz = [0, 2, 1, 3, 1, 2, 0, 3] if side == 0 else [3, 1, 2, 0, 2, 1, 3, 0]
-                run = [(st, zz[st]) for st in range(8)] + [(st, (3, 2, 1, 0)[k]) for k, st in enumerate(range(8, 16, 2))]
-            if last:                                  # close on a two-thumb chord
-                run = [(st, l) for st, l in run if st < 10] + [(12, 1), (12, 2)]
-            notes += [[at(b, st), l] for st, l in run]
-    notes.sort(key=lambda n: (n[0], n[1]))
-    for i, n in enumerate(notes):                     # no jacks: a repeat within 0.36 s moves to the thumb's other lane
-        prev = [m for m in notes[:i] if 1e-6 < n[0] - m[0] < 0.36]
-        if prev and prev[-1][1] == n[1] and len(n) == 2 and not any(abs(m[0] - n[0]) < 1e-6 for m in notes if m is not n):
-            n[1] ^= 1
-    out += [[round(float(n[0]), 3), int(n[1])] + ([round(float(n[2]), 3)] if len(n) > 2 else []) for n in notes]
+    r0 = b0 + args.rush_from * 4 * BEAT
+    # clear the rush window (up to, not including, the drop downbeat)
+    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3)]
+    busy = None
+    for n in out:
+        if len(n) > 2 and n[0] < r0 < n[0] + n[2] + 0.12:
+            if lv == HYPER and args.drums:
+                n[2] = round(max(STEP, r0 - THUMB_GAP - n[0]), 3)
+            else:
+                busy = (n[1] // 2, n[0] + n[2] + 0.12)
+    if args.drums:
+        out += drum_notes(lv, r0, go_t - THUMB_GAP + 1e-3, busy)
+    else:                                              # no drum track: plain alternating eighths
+        out += [[round(float(t), 3), 1 + i % 2] for i, t in enumerate(np.arange(r0, go_t - THUMB_GAP, STEP))]
+    out += [[round(float(go_t), 3), 0], [round(float(go_t), 3), 3]]
     return sorted(out, key=lambda n: (n[0], n[1]))
 
 
