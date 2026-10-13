@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Star Trace Night Race</title>
+<meta name="description" content="PLAVE 'Star Trace' 리듬게임. 야간 네온 F1 서킷에서 MV와 함께 달리고 타이밍 타워에 기록을 올리세요.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&family=IBM+Plex+Sans+KR:wght@400;600;700&display=swap">
+<style>
+[hidden] { display: none !important; }
+body { margin: 0; }
+/* Layout: full-bleed canvas night circuit; between races a glass control panel sits beside an F1-style timing tower. Single dark neon look by choice. */
+:root {
+  --night: #05060f;
+  --panel: rgba(7, 8, 22, 0.8);
+  --tower: rgba(6, 6, 14, 0.9);
+  --ink: #eef0ff;
+  --dim: #9097c4;
+  --line: rgba(255, 255, 255, 0.1);
+  --neon-cyan: #27f3ff;
+  --neon-pink: #ff2bd6;
+  --team-a: #dfe7ff;
+  --team-b: #4f7dff;
+  --purple: #c45bff;
+  --green: #33ff8a;
+  --yellow: #ffd21f;
+  --red: #ff3b4e;
+  --display: "Saira Condensed", "IBM Plex Sans KR", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--night); color: var(--ink); font-family: var(--body); overflow: hidden; }
+
+#stage {
+  position: fixed; left: 0; right: 0;
+  top: env(safe-area-inset-top, 0px); bottom: env(safe-area-inset-bottom, 0px);
+  user-select: none; -webkit-user-select: none;
+}
+#game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+.overlay {
+  position: absolute; inset: 0; overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  background: radial-gradient(ellipse at 50% 60%, transparent 30%, rgba(5, 6, 15, 0.6) 100%);
+}
+.duo {
+  margin: auto; width: 100%; max-width: 840px;
+  display: grid; grid-template-columns: minmax(0, 460px) minmax(0, 340px);
+  justify-content: center; align-items: start; gap: 16px;
+}
+@media (max-width: 860px) { .duo { grid-template-columns: minmax(0, 1fr); max-width: 460px; } }
+
+.panel {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 22px 20px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--team-b) 45%, transparent);
+  border-radius: 6px;
+  box-shadow: 0 0 40px color-mix(in srgb, var(--team-b) 25%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  min-width: 0;
+}
+.solo { margin: auto; width: min(460px, 100%); }
+.eyebrow { margin: 0; font: 600 12px/1.3 var(--display); letter-spacing: 0.2em; color: var(--dim); text-transform: uppercase; }
+.logo {
+  margin: 0; font: italic 800 clamp(50px, 14vw, 80px)/0.9 var(--display);
+  letter-spacing: 0.01em; transform: skewX(-8deg); transform-origin: left;
+  color: var(--ink);
+  text-shadow: 0 0 6px var(--neon-pink), 0 0 22px var(--neon-pink), 4px 0 0 color-mix(in srgb, var(--neon-cyan) 70%, transparent);
+}
+.sub { margin: -4px 0 0; font: 700 14px/1.2 var(--display); letter-spacing: 0.18em; color: var(--neon-cyan); }
+
+.group { display: grid; gap: 6px; }
+.label { font: 700 11px/1 var(--display); letter-spacing: 0.24em; color: var(--dim); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.seg button, .ghost {
+  font: 700 15px/1.1 var(--display); letter-spacing: 0.06em; color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 4px;
+  padding: 10px; cursor: pointer; text-align: left;
+  display: grid; gap: 3px;
+}
+.seg button small { font: 400 12px/1.2 var(--body); letter-spacing: 0; color: var(--dim); }
+.seg button.on { border-color: var(--team-b); background: color-mix(in srgb, var(--team-b) 18%, transparent); box-shadow: inset 0 0 0 1px var(--team-b); }
+.seg button[data-team="senatus"] b { color: #dfe7ff; }
+.seg button[data-team="juventas"] b { color: #ff7a3c; }
+
+.sync-row { display: flex; align-items: center; gap: 10px; }
+.sync-row input { flex: 1; accent-color: var(--neon-cyan); min-width: 0; }
+.sync-row output { font: 700 14px/1 var(--display); font-variant-numeric: tabular-nums; width: 64px; text-align: right; }
+
+.go {
+  font: italic 800 20px/1 var(--display); letter-spacing: 0.08em; color: #12000a;
+  background: linear-gradient(90deg, var(--neon-pink), #ff6a3d);
+  border: 0; border-radius: 4px; padding: 15px 16px; cursor: pointer;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--neon-pink) 55%, transparent);
+}
+.go:hover:not(:disabled) { filter: brightness(1.1); }
+.go:disabled { filter: grayscale(0.8) brightness(0.7); cursor: progress; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--neon-cyan); outline-offset: 2px; }
+.hint, .note, .best { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--dim); }
+.hint kbd {
+  font: 700 12px/1 var(--display); color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.25); border-bottom-width: 2px; border-radius: 3px;
+  padding: 2px 5px; margin: 0 1px;
+}
+.judge-key { display: flex; flex-wrap: wrap; gap: 6px 12px; font: 700 12px/1 var(--display); letter-spacing: 0.08em; }
+.judge-key span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: currentColor; }
+.best { color: var(--ink); font: 700 13px/1.2 var(--display); letter-spacing: 0.06em; }
+
+#pauseBtn {
+  position: absolute; left: 12px; top: 12px; width: 38px; height: 38px;
+  font: 800 14px/1 var(--display); color: var(--ink);
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; cursor: pointer;
+}
+
+/* result */
+.pos-line { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.pos { font: italic 800 96px/0.82 var(--display); transform: skewX(-8deg); color: var(--ink); text-shadow: 0 0 18px var(--team-b); }
+.badge { font: 800 14px/1 var(--display); letter-spacing: 0.14em; padding: 6px 8px; border-radius: 3px; color: #12000a; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin: 0; }
+.stats div { display: grid; gap: 3px; }
+.stats dt { font: 700 11px/1 var(--display); letter-spacing: 0.2em; color: var(--dim); }
+.stats dd { margin: 0; font: 700 26px/1 var(--display); font-variant-numeric: tabular-nums; }
+.sectors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.sectors span { font: 800 13px/1 var(--display); letter-spacing: 0.12em; text-align: center; padding: 8px 0; border-radius: 3px; color: #0a0a12; }
+.judges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+.judges div { display: grid; gap: 4px; }
+.judges b { font: 700 22px/1 var(--display); font-variant-numeric: tabular-nums; }
+.judges small { font: 700 10px/1 var(--display); letter-spacing: 0.12em; }
+.row { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.ghost { text-align: center; place-items: center; }
+.newbest { color: var(--yellow); }
+
+.submit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.submit-row { display: flex; gap: 8px; }
+.submit-row input {
+  flex: 1; min-width: 0; width: 0;
+  font: 600 15px/1 var(--body); color: var(--ink);
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px;
+  padding: 11px 12px;
+}
+.submit-row .go { font-size: 16px; padding: 11px 14px; white-space: nowrap; }
+#submitMsg { min-height: 1.55em; }
+#submitMsg.ok { color: var(--green); }
+#submitMsg.err { color: var(--red); }
+
+/* timing tower */
+.tower {
+  background: var(--tower); border-radius: 6px; overflow: hidden;
+  border: 1px solid var(--line);
+  display: grid; min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.tower-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 12px 12px 10px;
+  background: linear-gradient(90deg, #e10600 0 6px, #0c0c18 6px);
+}
+.tower-title { font: italic 800 20px/1 var(--display); letter-spacing: 0.04em; padding-left: 6px; }
+.tower-live { font: 700 11px/1 var(--display); letter-spacing: 0.2em; color: var(--dim); }
+.tower-live::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #e10600; margin-right: 6px; box-shadow: 0 0 8px #e10600; }
+.tower-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); }
+.tower-tabs button {
+  font: 700 13px/1 var(--display); letter-spacing: 0.16em; color: var(--dim);
+  background: transparent; border: 0; padding: 10px 0; cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tower-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--neon-cyan); }
+.tower-cols, .tower-list li {
+  display: grid; grid-template-columns: 26px 4px minmax(0, 1fr) auto 64px;
+  align-items: center; gap: 8px; padding: 0 12px;
+}
+.tower-cols { font: 700 10px/1 var(--display); letter-spacing: 0.18em; color: var(--dim); padding-block: 8px 6px; }
+.tower-cols span:last-child { text-align: right; }
+.tower-list { list-style: none; margin: 0; padding: 0; max-height: 46vh; overflow-y: auto; }
+.tower-list li { padding-block: 7px; border-top: 1px solid rgba(255, 255, 255, 0.05); font: 700 15px/1.1 var(--display); }
+.tower-list li.me { background: color-mix(in srgb, var(--neon-cyan) 12%, transparent); box-shadow: inset 3px 0 0 var(--neon-cyan); }
+.t-pos { text-align: center; font-weight: 800; }
+.tower-list li:nth-child(-n+3) .t-pos { color: #0a0a12; background: var(--ink); border-radius: 2px; }
+.t-bar { align-self: stretch; border-radius: 1px; }
+.t-nick { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0.02em; }
+.t-chip { font: 800 10px/1 var(--display); letter-spacing: 0.1em; padding: 3px 4px; border-radius: 2px; background: var(--purple); color: #12000a; }
+.t-chip.none { visibility: hidden; }
+.t-gap { text-align: right; font-weight: 600; color: var(--ink); }
+.t-gap.lead { color: var(--purple); }
+.tower-note { margin: 0; padding: 10px 12px 12px; font-size: 12px; line-height: 1.5; color: var(--dim); }
+.tower-empty { padding: 16px 12px; font-size: 13px; color: var(--dim); }
+
+@media (prefers-reduced-motion: reduce) { .go { box-shadow: none; } }
+
+/* MV screen in the sky band; nothing is drawn over it while it plays */
+#mvWrap {
+  position: absolute; z-index: 1; background: #000;
+  border: 1px solid rgba(39, 243, 255, 0.45);
+  box-shadow: 0 0 28px rgba(255, 43, 214, 0.35), 0 0 2px rgba(39, 243, 255, 0.9);
+}
+#mvWrap iframe, #mv { width: 100%; height: 100%; display: block; border: 0; }
+#pauseBtn { z-index: 2; }
+.overlay { z-index: 3; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" aria-label="Star Trace 리듬게임 트랙"></canvas>
+  <div id="mvWrap"><div id="mv"></div></div>
+  <button id="pauseBtn" aria-label="일시정지" hidden>II</button>
+
+  <div class="overlay" id="menu">
+    <div class="duo" id="menuDuo">
+      <section class="panel" aria-labelledby="logo">
+        <p class="eyebrow">PLAVE 5th Mini Album · HYPERDRIVE</p>
+        <h1 class="logo" id="logo">STAR TRACE</h1>
+        <p class="sub">NEON STRIP CIRCUIT · NIGHT RACE</p>
+
+        <div class="group">
+          <span class="label">TEAM</span>
+          <div class="seg" id="teamSeg">
+            <button type="button" id="teamSenatus" data-team="senatus" class="on"><b>SENATUS GP</b><small>예준 · 노아 · 하민</small></button>
+            <button type="button" id="teamJuventas" data-team="juventas"><b>JUVENTAS RACING</b><small>밤비 · 은호</small></button>
+          </div>
+        </div>
+
+        <div class="group">
+          <span class="label">CLASS</span>
+          <div class="seg" id="diffSeg">
+            <button type="button" id="diffNormal" data-diff="normal" class="on"><b>NORMAL</b><small>421 노트 · 처음 하는 사람용</small></button>
+            <button type="button" id="diffHard" data-diff="hard"><b>HARD</b><small>746 노트 · 8비트 연타 포함</small></button>
+          </div>
+        </div>
+
+        <div class="group">
+          <label class="label" for="offset">SYNC · 노트가 소리보다 빠르면 + 쪽으로</label>
+          <div class="sync-row">
+            <input type="range" id="offset" min="-300" max="300" step="5" value="0">
+            <output id="offsetOut" for="offset">0 ms</output>
+          </div>
+        </div>
+
+        <button type="button" class="go" id="startBtn" disabled>MV 불러오는 중…</button>
+
+        <p class="hint">PC <kbd>D</kbd><kbd>F</kbd><kbd>J</kbd><kbd>K</kbd> · 모바일은 레인 터치 · <kbd>Esc</kbd> 일시정지. 음악은 위 화면의 공식 MV로 나옵니다.</p>
+        <div class="judge-key" aria-label="판정 등급">
+          <span style="color:var(--purple)">PURPLE 완벽</span>
+          <span style="color:var(--green)">GREEN 좋음</span>
+          <span style="color:var(--yellow)">YELLOW 아슬</span>
+          <span style="color:var(--red)">PIT STOP 놓침</span>
+        </div>
+        <p class="best" id="bestLine"></p>
+      </section>
+
+      <aside class="tower" id="tower" aria-labelledby="towerTitle">
+        <div class="tower-head"><span class="tower-title" id="towerTitle">STAR TRACE GP</span><span class="tower-live">LIVE TIMING</span></div>
+        <div class="tower-tabs" role="tablist" aria-label="난이도별 순위">
+          <button type="button" role="tab" id="tabNormal" data-diff="normal" aria-selected="true">NORMAL</button>
+          <button type="button" role="tab" id="tabHard" data-diff="hard" aria-selected="false">HARD</button>
+        </div>
+        <div class="tower-cols" aria-hidden="true"><span>POS</span><span></span><span>DRIVER</span><span></span><span>GAP</span></div>
+        <ol class="tower-list" id="towerList"></ol>
+        <p class="tower-note" id="towerNote">기록을 불러오는 중…</p>
+      </aside>
+    </div>
+  </div>
+
+  <div class="overlay" id="pause" hidden>
+    <section class="panel solo" aria-labelledby="pauseTitle">
+      <p class="eyebrow">BOX, BOX</p>
+      <h2 class="logo" id="pauseTitle" style="font-size:56px">PIT LANE</h2>
+      <div class="row">
+        <button type="button" class="go" id="resumeBtn">계속 달리기</button>
+        <button type="button" class="ghost" id="quitBtn">메뉴로</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="overlay" id="result" hidden>
+    <div class="duo" id="resultDuo">
+      <section class="panel" aria-labelledby="rPos">
+        <p class="eyebrow" id="rEyebrow">CHEQUERED FLAG</p>
+        <div class="pos-line">
+          <div class="pos" id="rPos">P1</div>
+          <div class="badge" id="rBadge">FASTEST LAP</div>
+        </div>
+        <dl class="stats">
+          <div><dt>LAP TIME</dt><dd id="rLap">1:26.400</dd></div>
+          <div><dt>SCORE</dt><dd id="rScore">1,000,000</dd></div>
+          <div><dt>ACCURACY</dt><dd id="rAcc">100.00%</dd></div>
+          <div><dt>MAX COMBO</dt><dd id="rCombo">0</dd></div>
+        </dl>
+        <div class="sectors" id="rSectors"></div>
+        <div class="judges" id="rJudges"></div>
+        <p class="best" id="rBest"></p>
+
+        <form class="submit" id="submitForm" novalidate>
+          <label class="label" for="nick">DRIVER NAME · 리더보드에 기록 제출</label>
+          <div class="submit-row">
+            <input id="nick" name="nick" maxlength="12" autocomplete="nickname" placeholder="닉네임 (최대 12자)" spellcheck="false">
+            <button type="submit" class="go" id="submitBtn">기록 제출</button>
+          </div>
+          <p class="hint" id="submitMsg" role="status"></p>
+        </form>
+
+        <div class="row">
+          <button type="button" class="go" id="retryBtn">다시 달리기</button>
+          <button type="button" class="ghost" id="menuBtn">메뉴</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------- configuration ---------- */
+const MV_ID = "TBmE7m0yEwY"; // PLAVE 'Star Trace' M/V
+// Charts are built from the MV's own audio, so note times are MV times.
+const MV_OFFSET = 0;
+// Optional key art for the sky band behind the MV.
+const BG_SRC = "";
+// Charts are fixed so every driver on the leaderboard runs the same race (built by build_chart.py).
+const CHART = {"bpm":175.0,"beat":0.342857,"b0":0.003,"dur":218.432,"normal":[[2.746,0],[3.089,2],[3.432,1],[4.117,1],[4.803,3],[5.146,3],[5.489,0],[5.832,0],[6.174,2],[6.517,1],[6.86,2],[7.203,0],[7.546,2],[10.974,3],[11.317,2],[12.346,1],[12.689,0],[16.46,0],[16.803,1],[17.832,2],[18.86,3],[21.946,2],[22.289,0],[27.432,2],[28.632,0],[32.917,1],[33.432,0],[33.946,2],[34.289,0],[34.632,3],[35.317,2],[36.003,1],[36.346,0],[36.689,3],[37.032,0],[37.374,0],[37.717,1],[38.403,1],[38.746,2],[39.432,1],[39.774,1],[40.46,2],[40.803,1],[41.146,1],[41.489,3],[42.003,2],[42.517,3],[43.203,3],[43.546,1],[43.889,0],[44.746,3],[45.089,0],[45.432,3],[45.946,2],[46.289,3],[46.974,0],[47.489,1],[47.832,1],[48.174,2],[48.689,0],[49.203,1],[49.717,1],[50.232,3],[50.574,2],[50.917,2],[51.432,3],[51.946,0],[52.46,3],[52.803,1],[53.317,1],[53.66,0],[54.003,0],[54.517,1],[54.86,0],[55.374,2],[55.889,3],[56.403,3],[56.917,2],[57.26,3],[57.946,2],[58.46,0],[58.803,0],[59.146,1],[59.489,1],[59.832,0],[60.174,1],[60.689,2],[61.032,3],[61.374,3],[61.717,0],[62.06,2],[62.403,3],[62.746,2],[63.089,0],[63.432,1],[63.774,1],[64.117,2],[64.46,0],[64.803,2],[65.146,2],[65.832,0],[66.346,3],[66.86,2],[67.203,1],[67.546,1],[67.889,0],[68.232,2],[68.574,1],[68.917,1],[69.26,0],[69.603,2],[70.117,3],[70.46,3],[70.974,1],[71.317,1],[71.66,3],[72.174,1],[72.689,0],[73.032,0],[73.374,2],[73.717,0],[74.06,2],[74.746,1],[75.089,1],[75.432,2],[75.774,2],[76.289,0],[76.803,1],[77.146,2],[77.832,2],[78.517,1],[78.86,3],[79.889,3],[80.232,1],[80.574,2],[81.26,1],[81.603,2],[81.946,0],[82.289,0],[82.632,1],[83.317,2],[83.66,0],[84.003,2],[84.86,1],[85.374,3],[85.717,1],[86.06,2],[86.403,1],[87.089,3],[87.432,3],[87.774,2],[88.289,1],[88.803,1],[89.146,3],[89.489,0],[89.832,1],[90.86,0],[91.203,1],[91.546,3],[92.232,0],[92.574,3],[92.917,2],[93.26,2],[93.603,0],[94.289,0],[94.632,2],[95.317,2],[95.66,1],[96.003,0],[96.346,3],[96.86,2],[97.374,2],[97.717,3],[98.403,2],[98.746,0],[99.26,1],[99.603,0],[100.289,3],[100.803,3],[101.146,1],[101.832,2],[102.346,0],[102.689,1],[103.032,1],[103.374,0],[103.889,3],[104.403,2],[104.746,0],[105.26,3],[105.774,1],[106.289,3],[106.632,2],[107.146,2],[107.66,1],[108.174,0],[108.517,1],[109.203,0],[109.546,0],[109.889,3],[110.232,3],[110.574,0],[110.917,2],[111.26,2],[111.774,1],[112.117,3],[112.803,2],[113.317,0],[113.66,0],[114.003,1],[114.346,1],[114.86,3],[115.203,0],[115.546,1],[116.06,0],[116.403,2],[116.917,3],[117.26,2],[117.603,2],[117.946,0],[118.289,1],[118.632,3],[118.974,2],[119.317,0],[119.66,1],[120.003,3],[120.689,0],[121.032,1],[121.717,2],[122.06,0],[122.403,1],[123.089,3],[123.432,1],[124.46,0],[126.174,2],[126.517,2],[127.374,3],[127.717,1],[128.232,1],[128.574,3],[128.917,0],[130.117,0],[130.46,2],[130.974,3],[131.317,3],[131.66,2],[132.346,2],[132.689,3],[133.032,0],[133.374,0],[134.06,2],[134.403,1],[134.746,1],[135.089,3],[135.432,2],[135.774,0],[136.117,0],[136.46,1],[136.803,2],[137.146,3],[137.832,2],[138.346,0],[138.86,0],[139.203,2],[139.717,1],[140.232,3],[140.574,3],[140.917,1],[141.26,1],[141.603,0],[141.946,0],[142.632,1],[143.146,2],[143.66,3],[144.174,2],[144.689,3],[145.032,3],[145.374,0],[145.717,1],[146.403,2],[146.917,0],[147.26,1],[147.774,3],[148.117,0],[148.46,2],[149.146,3],[149.489,0],[149.832,2],[150.346,1],[150.689,1],[151.203,2],[151.546,1],[151.889,3],[152.232,0],[152.574,1],[153.089,0],[153.432,1],[153.774,2],[154.289,3],[154.632,2],[155.146,2],[155.66,3],[156.003,1],[156.517,1],[157.032,3],[157.374,2],[157.889,0],[158.232,0],[158.574,2],[158.917,0],[159.26,2],[159.603,1],[160.117,3],[160.632,1],[161.146,3],[161.489,2],[162.003,2],[162.517,3],[162.86,1],[163.374,0],[163.889,1],[164.232,0],[164.574,0],[164.917,2],[165.603,2],[166.117,1],[166.632,3],[166.974,2],[167.317,0],[167.66,1],[168.003,3],[168.346,1],[168.86,0],[169.374,2],[169.717,2],[170.06,0],[170.403,1],[170.746,3],[171.089,2],[171.432,0],[172.117,3],[172.46,2],[172.803,0],[173.146,1],[173.489,1],[173.832,2],[174.174,1],[174.517,1],[175.032,3],[175.546,0],[175.889,2],[176.574,2],[176.917,0],[177.26,3],[177.946,2],[178.289,0],[178.632,3],[179.317,3],[179.832,1],[180.174,1],[180.517,0],[180.86,0],[181.374,2],[181.717,1],[182.06,3],[182.403,0],[182.746,1],[183.089,1],[183.432,2],[183.774,0],[184.117,2],[184.46,3],[184.803,1],[185.317,2],[185.832,3],[186.174,2],[186.689,1],[187.032,0],[187.546,2],[188.06,1],[188.403,0],[188.746,0],[189.089,2],[189.603,3],[189.946,3],[190.289,1],[190.803,1],[191.317,3],[191.66,2],[192.003,0],[192.346,2],[192.689,3],[193.032,2],[193.374,0],[193.717,1],[194.06,1],[194.403,0],[194.746,0],[195.089,2],[195.774,2],[196.289,1],[196.803,3],[197.146,3],[197.66,2],[198.003,0],[198.517,3],[198.86,0],[199.203,2],[199.546,1],[199.889,1],[200.232,0],[200.574,2],[200.917,1],[201.26,2],[201.603,0],[201.946,3],[202.289,3],[202.632,2],[202.974,0],[203.317,2],[203.66,0],[204.003,2]],"hard":[[2.746,0],[3.089,2],[3.432,1],[3.774,0],[4.117,1],[4.46,3],[4.632,2],[4.803,3],[5.146,3],[5.489,0],[5.66,1],[6.174,2],[6.346,3],[6.517,1],[6.689,0],[6.86,1],[7.203,0],[7.546,2],[7.717,1],[10.974,2],[11.317,1],[12.003,2],[12.346,1],[12.517,0],[12.689,1],[13.032,3],[16.46,0],[16.803,0],[16.974,3],[17.832,1],[18.517,2],[18.86,2],[21.946,0],[22.289,0],[22.46,1],[27.432,1],[28.46,2],[28.632,0],[32.917,1],[33.089,3],[33.432,1],[33.946,2],[34.117,0],[34.289,1],[34.46,0],[34.632,2],[34.974,3],[35.317,2],[35.66,2],[36.003,1],[36.346,1],[36.689,3],[36.86,0],[37.032,1],[37.203,0],[37.374,1],[37.546,3],[37.717,1],[38.403,2],[38.746,3],[38.917,1],[39.432,2],[39.603,0],[39.774,1],[40.117,0],[40.46,2],[40.632,0],[40.803,1],[41.146,1],[41.489,3],[41.832,2],[42.003,1],[42.174,2],[42.517,2],[42.689,3],[43.203,3],[43.374,2],[43.546,0],[43.889,0],[44.06,3],[44.574,3],[44.746,2],[45.089,0],[45.26,1],[45.432,2],[45.603,0],[45.774,2],[45.946,1],[46.289,2],[46.974,0],[47.489,1],[47.66,3],[47.832,2],[48.003,0],[48.174,2],[48.517,0],[48.689,1],[48.86,2],[49.203,0],[49.717,1],[49.889,2],[50.232,3],[50.403,2],[50.574,1],[50.746,3],[50.917,2],[51.432,2],[51.774,0],[51.946,1],[52.117,3],[52.46,2],[52.803,1],[53.146,0],[53.317,1],[53.489,2],[53.66,0],[54.003,0],[54.517,1],[54.689,2],[54.86,1],[55.032,2],[55.203,1],[55.374,2],[55.717,0],[55.889,3],[56.232,0],[56.403,3],[56.574,2],[56.917,2],[57.089,0],[57.26,3],[57.774,1],[57.946,2],[58.289,3],[58.46,0],[58.632,2],[58.803,1],[58.974,0],[59.146,1],[59.317,2],[59.489,1],[59.832,0],[60.003,2],[60.346,0],[60.517,1],[60.689,2],[60.86,1],[61.203,1],[61.374,3],[61.546,1],[61.717,0],[61.889,2],[62.06,3],[62.232,1],[62.403,3],[62.746,3],[63.089,0],[63.432,2],[63.603,0],[63.774,1],[64.117,2],[64.289,0],[64.46,1],[64.803,2],[65.146,3],[65.317,1],[65.832,0],[65.832,3],[66.003,2],[66.346,3],[66.689,2],[66.86,1],[67.032,0],[67.203,1],[67.374,3],[67.546,1],[67.889,0],[68.06,2],[68.232,1],[68.403,0],[68.574,1],[68.746,2],[68.917,1],[69.089,3],[69.432,3],[69.603,2],[69.774,1],[69.946,2],[70.117,3],[70.289,2],[70.46,3],[70.803,1],[70.974,3],[71.146,2],[71.317,1],[71.489,2],[71.66,1],[72.003,1],[72.174,0],[72.346,1],[72.689,0],[73.032,0],[73.203,1],[73.374,0],[73.546,1],[73.717,0],[73.889,1],[74.06,2],[74.403,2],[74.746,1],[74.917,2],[75.089,1],[75.26,2],[75.432,1],[75.603,2],[75.774,1],[76.289,2],[76.46,1],[76.803,1],[77.146,2],[77.66,0],[77.832,3],[78.174,1],[78.517,2],[78.86,3],[79.203,1],[79.889,3],[80.232,3],[80.403,0],[80.574,2],[81.26,1],[81.432,3],[81.603,2],[81.946,1],[82.289,0],[82.632,1],[82.803,2],[83.146,0],[83.317,2],[83.66,0],[84.003,2],[84.517,0],[84.689,1],[84.86,2],[85.032,3],[85.374,3],[85.717,2],[86.06,2],[86.232,1],[86.403,2],[86.746,3],[87.089,3],[87.26,1],[87.432,3],[87.774,2],[87.946,1],[88.289,2],[88.46,0],[88.632,1],[88.803,2],[89.146,1],[89.317,3],[89.489,0],[89.832,1],[90.174,1],[90.346,0],[90.517,2],[90.689,1],[90.86,0],[91.203,1],[91.546,3],[91.717,1],[92.06,2],[92.232,0],[92.403,3],[92.574,2],[92.917,2],[93.089,0],[93.26,2],[93.603,1],[93.774,2],[94.117,0],[94.289,1],[94.46,2],[94.632,1],[94.974,0],[95.146,1],[95.317,2],[95.66,2],[96.003,1],[96.346,2],[96.689,2],[96.86,1],[97.032,2],[97.374,2],[97.546,1],[97.717,3],[98.232,2],[98.403,1],[98.746,0],[98.746,3],[98.917,2],[99.26,1],[99.432,2],[99.603,0],[99.774,3],[100.117,0],[100.289,3],[100.46,2],[100.803,2],[100.974,0],[101.146,3],[101.66,1],[101.832,2],[102.174,3],[102.346,0],[102.517,2],[102.689,1],[102.86,0],[103.032,2],[103.203,1],[103.374,2],[103.717,0],[103.889,3],[104.232,0],[104.403,2],[104.746,1],[105.089,1],[105.26,3],[105.432,1],[105.603,0],[105.774,2],[105.946,3],[106.289,3],[106.632,2],[106.803,1],[106.974,0],[107.146,3],[107.317,2],[107.66,2],[107.832,0],[108.003,2],[108.174,0],[108.346,1],[108.517,2],[108.689,1],[109.203,0],[109.546,1],[109.717,2],[109.889,3],[110.403,3],[110.574,1],[110.746,2],[110.917,1],[111.089,2],[111.26,1],[111.432,3],[111.774,1],[111.946,0],[112.117,3],[112.46,0],[112.803,2],[113.146,3],[113.317,0],[113.489,3],[113.66,1],[113.832,0],[114.003,1],[114.174,2],[114.346,1],[114.689,0],[114.86,2],[115.203,0],[115.374,1],[115.546,2],[115.889,3],[116.06,0],[116.232,3],[116.574,0],[116.746,3],[116.917,2],[117.26,2],[117.603,0],[117.774,1],[117.946,0],[118.117,2],[118.289,1],[118.46,2],[118.632,3],[118.974,2],[119.317,0],[119.66,2],[120.003,3],[120.174,2],[120.689,0],[120.86,1],[121.032,2],[121.717,2],[121.889,1],[122.06,0],[122.403,1],[122.917,3],[123.089,2],[123.432,1],[124.117,0],[124.46,0],[124.632,1],[126.174,2],[126.346,3],[126.517,2],[127.374,2],[127.546,1],[128.232,1],[128.574,3],[128.746,2],[128.917,0],[129.432,1],[129.603,0],[130.117,0],[130.289,1],[130.803,0],[130.974,3],[131.146,2],[131.66,1],[131.832,3],[132.003,2],[132.346,2],[132.517,3],[132.689,2],[133.032,0],[133.203,1],[133.374,0],[133.889,0],[134.06,2],[134.232,1],[134.574,2],[134.746,0],[135.089,1],[135.26,2],[135.432,1],[135.603,3],[135.774,0],[136.117,0],[136.289,1],[136.632,3],[136.803,2],[136.974,3],[137.146,2],[137.317,1],[137.489,2],[137.66,1],[137.832,2],[138.346,0],[138.517,3],[138.86,0],[139.203,2],[139.374,0],[139.717,2],[139.889,1],[140.06,3],[140.232,2],[140.574,3],[140.746,2],[140.917,3],[141.26,1],[141.603,0],[141.946,0],[142.46,2],[142.632,1],[142.803,2],[142.974,1],[143.146,2],[143.489,0],[143.66,3],[144.003,1],[144.174,2],[144.346,1],[144.689,3],[144.86,0],[145.032,3],[145.374,0],[145.546,1],[145.717,2],[145.889,3],[146.403,2],[146.574,3],[146.746,0],[146.917,1],[147.089,3],[147.26,1],[147.774,2],[147.946,1],[148.117,0],[148.289,1],[148.46,2],[148.632,1],[149.146,2],[149.317,1],[149.489,0],[149.66,2],[149.832,1],[150.174,3],[150.346,1],[150.517,3],[150.86,1],[151.032,0],[151.203,2],[151.374,0],[151.546,1],[151.717,0],[151.889,3],[152.232,0],[152.403,1],[152.574,2],[152.746,0],[152.917,2],[153.089,1],[153.26,2],[153.603,1],[153.774,3],[153.946,2],[154.289,3],[154.46,1],[154.632,2],[154.974,0],[155.146,2],[155.317,1],[155.66,3],[155.832,0],[156.003,1],[156.346,0],[156.517,1],[156.689,2],[157.032,3],[157.374,1],[157.546,2],[157.717,0],[157.889,1],[158.06,2],[158.403,3],[158.574,0],[158.746,2],[159.26,2],[159.432,3],[159.603,1],[159.946,0],[160.117,3],[160.289,1],[160.46,2],[160.632,1],[160.803,3],[161.146,3],[161.317,1],[161.489,3],[161.832,0],[162.003,2],[162.517,3],[162.689,0],[162.86,2],[163.032,1],[163.203,0],[163.374,1],[163.546,2],[163.889,1],[164.06,0],[164.232,1],[164.574,1],[164.746,2],[164.917,1],[165.26,3],[165.432,1],[165.603,3],[165.946,0],[166.117,1],[166.289,3],[166.632,3],[166.803,0],[166.974,3],[167.317,0],[167.489,2],[167.66,1],[168.003,3],[168.346,1],[168.517,2],[168.689,0],[168.86,1],[169.032,2],[169.374,3],[169.546,0],[169.717,2],[170.06,0],[170.232,1],[170.403,2],[170.917,0],[171.089,3],[171.26,1],[171.432,0],[171.603,2],[171.774,3],[171.946,2],[172.117,3],[172.46,3],[172.803,0],[172.974,1],[173.146,2],[173.489,1],[173.66,0],[173.832,2],[174.003,0],[174.174,1],[174.346,0],[174.517,1],[174.689,2],[175.032,1],[175.546,0],[175.717,2],[175.889,3],[176.232,3],[176.403,1],[176.574,3],[176.917,0],[177.089,1],[177.26,3],[177.774,0],[177.946,2],[178.117,1],[178.289,0],[178.46,1],[178.632,3],[178.803,2],[178.974,3],[179.317,3],[179.66,1],[179.832,2],[180.003,1],[180.517,0],[180.689,3],[180.86,0],[181.032,1],[181.374,3],[181.546,0],[181.717,2],[181.889,0],[182.06,3],[182.232,1],[182.403,2],[182.574,0],[182.746,2],[182.917,0],[183.089,2],[183.26,1],[183.432,2],[183.774,1],[183.946,3],[184.117,2],[184.46,3],[184.632,1],[184.803,2],[185.146,0],[185.317,2],[185.66,1],[185.832,3],[186.003,0],[186.174,2],[186.517,0],[186.689,2],[186.86,1],[187.374,0],[187.546,3],[187.717,1],[187.889,0],[188.06,1],[188.232,2],[188.574,3],[188.746,0],[188.917,2],[189.26,0],[189.603,3],[189.774,1],[190.117,1],[190.289,2],[190.46,1],[190.632,2],[190.803,1],[190.974,3],[191.317,3],[191.489,1],[191.66,3],[192.003,0],[192.174,2],[192.346,3],[192.86,0],[193.032,2],[193.203,1],[193.374,0],[193.546,1],[193.717,2],[193.889,0],[194.06,1],[194.403,1],[194.746,3],[194.917,2],[195.089,3],[195.432,3],[195.603,1],[195.774,2],[196.117,0],[196.289,1],[196.46,3],[196.803,3],[196.974,0],[197.146,3],[197.489,0],[197.66,2],[197.832,1],[198.003,0],[198.517,3],[198.689,2],[198.86,0],[199.032,1],[199.203,2],[199.374,1],[199.546,2],[199.717,0],[199.889,2],[200.232,0],[200.403,1],[200.574,2],[200.917,2],[201.089,0],[201.26,3],[201.432,1],[201.603,2],[201.774,1],[201.946,3],[202.289,3],[202.46,1],[202.632,2],[202.803,1],[202.974,0],[203.146,1],[203.317,2],[203.66,2],[203.832,0],[204.003,3],[204.174,0]]};
+
+/* ---------- constants ---------- */
+const TEAMS = {
+  senatus:  { name: "SENATUS GP", a: "#e6ecff", b: "#4f7dff", glow: "#7fa8ff", kerbA: "#e8eeff", kerbB: "#2b44c4", lanes: ["#7fb0ff", "#f2f5ff", "#f2f5ff", "#7fb0ff"] },
+  juventas: { name: "JUVENTAS RACING", a: "#ff4b1f", b: "#ffd21f", glow: "#ff6a2a", kerbA: "#ff4b1f", kerbB: "#ffd21f", lanes: ["#ff5a2a", "#ffd21f", "#ffd21f", "#ff5a2a"] },
+};
+const CYAN = "#27f3ff", PINK = "#ff2bd6";
+const JW = { purple: 0.045, green: 0.09, yellow: 0.135 };
+const JUDGE = {
+  purple: { label: "PURPLE", color: "#c45bff", pts: 100 },
+  green:  { label: "GREEN", color: "#33ff8a", pts: 75 },
+  yellow: { label: "YELLOW", color: "#ffd21f", pts: 40 },
+  miss:   { label: "PIT STOP", color: "#ff3b4e", pts: 0 },
+};
+const KEYMAP = { KeyD: 0, KeyF: 1, KeyJ: 2, KeyK: 3 };
+const KEY_LABELS = ["D", "F", "J", "K"];
+const GANTRY_TEXT = ["STAR TRACE", "PLAVE", "HYPERDRIVE", "ASTERUM"];
+const FONT = '"Saira Condensed", "IBM Plex Sans KR", "Arial Narrow", sans-serif';
+const BEAT = CHART.beat;
+const lapOf = score => 86.4 + (1 - score / 1e6) * 30;
+
+/* ---------- DOM ---------- */
+const $ = id => document.getElementById(id);
+const cvs = $("game"), g = cvs.getContext("2d");
+const ui = {
+  menu: $("menu"), pause: $("pause"), result: $("result"), pauseBtn: $("pauseBtn"), mvWrap: $("mvWrap"),
+  offset: $("offset"), offsetOut: $("offsetOut"), bestLine: $("bestLine"), startBtn: $("startBtn"),
+  tower: $("tower"), towerList: $("towerList"), towerNote: $("towerNote"),
+  nick: $("nick"), submitBtn: $("submitBtn"), submitMsg: $("submitMsg"), submitForm: $("submitForm"),
+};
+
+/* ---------- settings ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let teamKey = store.get("st-team", "senatus");
+let diff = store.get("st-diff", "normal");
+let offsetMs = store.get("st-offset", 0);
+let team = TEAMS[teamKey];
+
+/* ---------- layout ---------- */
+let W = 0, H = 0, DPR = 1, G = null, bgLayer = null, bgImg = null, MV = null, narrow = false;
+let C = 2; // perspective constant: s = 1 / (1 + dt*C)
+
+function resize() {
+  const r = cvs.getBoundingClientRect();
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  cvs.width = Math.round(W * DPR); cvs.height = Math.round(H * DPR);
+  narrow = W < 900;
+  // YouTube asks for an embedded player of at least 200x200 px; 16:9 at 200 tall is 356 wide.
+  let mw, mh, mx, my = 10;
+  if (narrow) {
+    mw = Math.min(W - 24, 560); mh = Math.max(200, mw * 9 / 16); mw = Math.max(mw, 356);
+  } else {
+    mh = Math.max(200, Math.min(H * 0.36 - 24, 320)); mw = mh * 16 / 9;
+  }
+  mx = (W - mw) / 2;
+  MV = { x: mx, y: my, w: mw, h: mh, bottom: my + mh };
+  Object.assign(ui.mvWrap.style, { left: mx + "px", top: my + "px", width: mw + "px", height: mh + "px" });
+  const hudRow = narrow ? MV.bottom + 8 : 12;
+  Object.assign(ui.pauseBtn.style, { left: "12px", top: hudRow + "px" });
+  const hy = narrow ? Math.max(H * 0.33, MV.bottom + 92) : Math.max(H * 0.36, MV.bottom + 14);
+  const jy = Math.max(hy + 180, H * (narrow ? 0.82 : 0.84));
+  G = { cx: W / 2, hy, jy: Math.min(jy, H - 60), hw: Math.min(W * 0.45, 310), hudRow };
+  buildBg();
+}
+const P = (o, s) => [G.cx + o * G.hw * s, G.hy + (G.jy - G.hy) * s];
+const sOf = dt => (dt >= 0 ? 1 / (1 + dt * C) : 1 - dt * C);
+const sBottom = () => (H - G.hy) / (G.jy - G.hy);
+
+/* ---------- static background (sky, skyline, grandstand) ---------- */
+function buildBg() {
+  bgLayer = document.createElement("canvas");
+  bgLayer.width = cvs.width; bgLayer.height = cvs.height;
+  const b = bgLayer.getContext("2d");
+  b.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const hy = G.hy;
+  let seed = 20261013;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+  const sky = b.createLinearGradient(0, 0, 0, hy);
+  sky.addColorStop(0, "#020208"); sky.addColorStop(0.55, "#0a0a2c"); sky.addColorStop(0.92, "#2a0b4c"); sky.addColorStop(1, "#4a0f5a");
+  b.fillStyle = sky; b.fillRect(0, 0, W, hy + 2);
+
+  if (bgImg) {
+    const ir = bgImg.width / bgImg.height, ar = W / hy;
+    let dw = W, dh = W / ir;
+    if (ir >= ar) { dh = hy; dw = hy * ir; }
+    b.drawImage(bgImg, (W - dw) / 2, hy - dh, dw, dh);
+    const fade = b.createLinearGradient(0, 0, 0, hy);
+    fade.addColorStop(0, "rgba(2,2,8,0.55)"); fade.addColorStop(0.7, "rgba(2,2,8,0.1)"); fade.addColorStop(1, "rgba(5,6,15,0.5)");
+    b.fillStyle = fade; b.fillRect(0, 0, W, hy);
+  } else {
+    for (let i = 0; i < 160; i++) {
+      const x = rnd() * W, y = rnd() * hy * 0.7, r = rnd() * 1.2 + 0.2;
+      b.fillStyle = `rgba(220,225,255,${0.25 + rnd() * 0.6})`;
+      b.fillRect(x, y, r, r);
+    }
+    const sc = Math.min(1.3, H / 800);
+    for (let x = -10; x < W + 10;) {
+      const w = 14 + rnd() * 40, h = (24 + rnd() * 90) * sc;
+      b.fillStyle = "#0b0a22"; b.fillRect(x, hy - h - 10, w, h + 10);
+      x += w + rnd() * 6;
+    }
+    const winCols = [CYAN, PINK, "#ffb547", "#9f7bff"];
+    for (let x = -20; x < W + 20;) {
+      const w = 22 + rnd() * 46, h = (50 + rnd() * 170) * sc;
+      const top = hy - h - 12;
+      b.fillStyle = "#07061a"; b.fillRect(x, top, w, h + 12);
+      const wc = winCols[Math.floor(rnd() * winCols.length)];
+      b.fillStyle = wc;
+      for (let yy = top + 6; yy < hy - 14; yy += 7) for (let xx = x + 4; xx < x + w - 4; xx += 6) {
+        if (rnd() < 0.22) { b.globalAlpha = 0.35 + rnd() * 0.5; b.fillRect(xx, yy, 2.5, 3); }
+      }
+      b.globalAlpha = 1;
+      if (rnd() < 0.3) { b.shadowColor = wc; b.shadowBlur = 10; b.fillStyle = wc; b.fillRect(x, top, w, 2); b.shadowBlur = 0; }
+      if (rnd() < 0.25) { b.fillStyle = "#ff3355"; b.fillRect(x + w / 2 - 1, top - 10 * sc, 2, 10 * sc); }
+      x += w + 4 + rnd() * 18;
+    }
+    // observation wheel, the night-race landmark (left of the MV screen on wide layouts)
+    const wr = Math.min(W, H) * 0.12, wx = narrow ? W * 0.12 : Math.max(wr + 12, MV.x * 0.45), wy = hy - wr - 18;
+    b.strokeStyle = CYAN; b.shadowColor = CYAN; b.shadowBlur = 14; b.lineWidth = 2;
+    b.beginPath(); b.arc(wx, wy, wr, 0, Math.PI * 2); b.stroke();
+    b.lineWidth = 0.8; b.globalAlpha = 0.55;
+    for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; b.beginPath(); b.moveTo(wx, wy); b.lineTo(wx + Math.cos(a) * wr, wy + Math.sin(a) * wr); b.stroke(); }
+    b.globalAlpha = 1; b.fillStyle = PINK; b.shadowColor = PINK;
+    for (let i = 0; i < 24; i++) { const a = (i / 24) * Math.PI * 2; b.fillRect(wx + Math.cos(a) * wr - 2, wy + Math.sin(a) * wr - 2, 4, 4); }
+    b.shadowBlur = 0; b.strokeStyle = "#1a1a3a"; b.lineWidth = 3;
+    b.beginPath(); b.moveTo(wx - wr * 0.4, hy - 4); b.lineTo(wx, wy); b.lineTo(wx + wr * 0.4, hy - 4); b.stroke();
+  }
+  b.fillStyle = "#06051a"; b.fillRect(0, hy - 14, W, 14);
+  for (let x = 2; x < W; x += 5) {
+    b.fillStyle = rnd() < 0.5 ? `rgba(255,255,255,${0.2 + rnd() * 0.5})` : `rgba(255,43,214,${0.2 + rnd() * 0.5})`;
+    b.fillRect(x, hy - 12 + rnd() * 8, 1.5, 1.5);
+  }
+  b.globalCompositeOperation = "lighter";
+  const haze = b.createRadialGradient(G.cx, hy, 0, G.cx, hy, Math.max(W, H) * 0.6);
+  haze.addColorStop(0, "rgba(255,43,214,0.35)"); haze.addColorStop(0.35, "rgba(90,40,255,0.12)"); haze.addColorStop(1, "rgba(0,0,0,0)");
+  b.fillStyle = haze; b.fillRect(0, 0, W, H);
+  b.globalCompositeOperation = "source-over";
+  const gr = b.createLinearGradient(0, hy, 0, H);
+  gr.addColorStop(0, "#120a2a"); gr.addColorStop(1, "#04040c");
+  b.fillStyle = gr; b.fillRect(0, hy, W, H - hy);
+}
+
+/* ---------- YouTube MV player and clock ---------- */
+let player = null, playerReady = false, playerState = -1;
+// The game clock runs on performance.now() and is re-anchored to the player's reported time,
+// so notes move smoothly even though getCurrentTime() updates in coarse steps.
+const clock = { base: 0, at: 0, running: false, lastSync: 0 };
+function mvNow() { return clock.running ? clock.base + (performance.now() - clock.at) / 1000 : clock.base; }
+function anchorClock(running) {
+  clock.base = player ? player.getCurrentTime() || 0 : 0;
+  clock.at = performance.now(); clock.running = running; clock.lastSync = clock.at;
+}
+function syncClock() {
+  if (!clock.running || !player || performance.now() - clock.lastSync < 400) return;
+  clock.lastSync = performance.now();
+  const drift = (player.getCurrentTime() || 0) - mvNow();
+  if (Math.abs(drift) > 0.12) anchorClock(true);       // seek, stall or ad: jump
+  else clock.base += drift * 0.15;                      // jitter: ease in
+}
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player("mv", {
+    videoId: MV_ID, width: "100%", height: "100%",
+    playerVars: { playsinline: 1, controls: 0, disablekb: 1, rel: 0, fs: 0, iv_load_policy: 3, origin: location.origin },
+    events: {
+      onReady: () => { playerReady = true; refreshStart(); },
+      onStateChange: e => {
+        playerState = e.data;
+        if (e.data === YT.PlayerState.PLAYING) {
+          anchorClock(true);
+          if (state === "paused") resumeGame(true);
+        } else {
+          anchorClock(false);
+          if (e.data === YT.PlayerState.PAUSED && state === "play") pauseGame(true);
+          if (e.data === YT.PlayerState.ENDED && state === "play") finish();
+        }
+      },
+      onError: () => { playerReady = false; refreshStart(true); },
+    },
+  });
+};
+function loadYouTube() {
+  const s = document.createElement("script");
+  s.src = "https://www.youtube.com/iframe_api";
+  s.onerror = () => refreshStart(true);
+  document.head.appendChild(s);
+}
+function refreshStart(failed) {
+  const b = ui.startBtn;
+  b.disabled = !playerReady;
+  b.textContent = playerReady ? "LIGHTS OUT · 레이스 시작" : failed ? "MV를 불러오지 못했어요 · 새로고침해 주세요" : "MV 불러오는 중…";
+}
+
+/* ---------- game state ---------- */
+let state = "menu";       // menu | play | paused | result
+let notes = [], missPtr = 0, songEnd = 0, songLen = CHART.dur;
+let beatP = BEAT, beatO = CHART.b0;
+let stats = null, lastRun = null;
+const lanePress = [-9, -9, -9, -9], laneHeld = [false, false, false, false];
+let fx = [], sparks = [], lastJudge = null, speed = 120, shake = 0;
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function freshStats() {
+  return { score: 0, pts: 0, judged: 0, combo: 0, maxCombo: 0, counts: { purple: 0, green: 0, yellow: 0, miss: 0 },
+           sec: [[0, 0], [0, 0], [0, 0]] };
+}
+function songNow() { return mvNow() - MV_OFFSET - offsetMs / 1000; }
+
+function startRace() {
+  if (!playerReady) return;
+  C = 3 / (diff === "hard" ? 1.15 : 1.5);
+  notes = CHART[diff].map(([t, lane]) => ({ t, lane, done: false }));
+  missPtr = 0; stats = freshStats(); fx = []; sparks = []; lastJudge = null; speed = 120;
+  songLen = Math.min(CHART.dur, notes[notes.length - 1].t + 3);
+  songEnd = songLen + 0.4;
+  // Called inside the click, so the MV starts with sound on phones too.
+  player.unMute(); player.setVolume(100);
+  player.seekTo(0, true); player.playVideo();
+  anchorClock(false); clock.base = 0;
+  state = "play";
+  ui.menu.hidden = true; ui.result.hidden = true; ui.pause.hidden = true; ui.pauseBtn.hidden = false;
+}
+function pauseGame(fromPlayer) {
+  if (state !== "play") return;
+  state = "paused"; if (!fromPlayer) player.pauseVideo();
+  ui.pause.hidden = false; ui.pauseBtn.hidden = true;
+  $("resumeBtn").focus();
+}
+function resumeGame(fromPlayer) {
+  if (state !== "paused") return;
+  if (!fromPlayer) player.playVideo();
+  state = "play"; ui.pause.hidden = true; ui.pauseBtn.hidden = false;
+}
+function toMenu() {
+  if (player && playerReady) player.pauseVideo();
+  state = "menu";
+  ui.pause.hidden = true; ui.result.hidden = true; ui.pauseBtn.hidden = true; ui.menu.hidden = false;
+  $("menuDuo").appendChild(ui.tower);
+  refreshMenu(); ui.startBtn.focus();
+}
+
+/* ---------- judging ---------- */
+function secOf(t) { return Math.min(2, Math.max(0, Math.floor((t / songLen) * 3))); }
+function applyJudge(note, kind, dt) {
+  note.done = true;
+  const j = JUDGE[kind];
+  stats.counts[kind]++; stats.judged++; stats.pts += j.pts;
+  const sc = stats.sec[secOf(note.t)]; sc[0] += j.pts; sc[1] += 100;
+  if (kind === "miss") { stats.combo = 0; shake = reduceMotion ? 0 : 6; }
+  else { stats.combo++; stats.maxCombo = Math.max(stats.maxCombo, stats.combo); }
+  stats.score = Math.round((stats.pts / (notes.length * 100)) * 1e6);
+  lastJudge = { kind, at: performance.now() / 1000, dt };
+  if (kind !== "miss") {
+    const [x, y] = P(-0.75 + note.lane * 0.5, 1);
+    fx.push({ x, y, c: j.color, at: performance.now() / 1000 });
+    const n = reduceMotion ? 4 : kind === "purple" ? 14 : 8;
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.4, v = 160 + Math.random() * 260;
+      sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.5, c: j.color });
+    }
+  }
+}
+function press(lane) {
+  lanePress[lane] = performance.now() / 1000;
+  if (state !== "play" || !clock.running) return;
+  const now = songNow();
+  let best = null, bestAbs = 9;
+  for (let i = missPtr; i < notes.length; i++) {
+    const n = notes[i];
+    if (n.t > now + JW.yellow + 0.05) break;
+    if (n.done || n.lane !== lane) continue;
+    const a = Math.abs(n.t - now);
+    if (a < bestAbs) { bestAbs = a; best = n; }
+  }
+  if (!best || bestAbs > JW.yellow) return;
+  const kind = bestAbs <= JW.purple ? "purple" : bestAbs <= JW.green ? "green" : "yellow";
+  applyJudge(best, kind, now - best.t);
+}
+function sweepMisses(now) {
+  while (missPtr < notes.length) {
+    const n = notes[missPtr];
+    if (n.done) { missPtr++; continue; }
+    if (now - n.t > JW.yellow) { applyJudge(n, "miss", 0); missPtr++; continue; }
+    break;
+  }
+}
+
+/* ---------- results ---------- */
+const fmtScore = n => n.toLocaleString("en-US");
+function fmtLap(sec) { const m = Math.floor(sec / 60), s = sec - m * 60; return `${m}:${s.toFixed(3).padStart(6, "0")}`; }
+function secColor(i) {
+  const [p, m] = stats.sec[i];
+  if (!m) return "rgba(255,255,255,0.15)";
+  const r = p / m; return r >= 0.95 ? JUDGE.purple.color : r >= 0.82 ? JUDGE.green.color : JUDGE.yellow.color;
+}
+function finish() {
+  state = "result"; ui.pauseBtn.hidden = true;
+  sweepMisses(Infinity);
+  const acc = stats.judged ? stats.pts / (stats.judged * 100) : 0;
+  const steps = [0.985, 0.96, 0.93, 0.9, 0.86, 0.82, 0.77, 0.72, 0.66];
+  let pos = steps.findIndex(v => acc >= v); pos = pos < 0 ? 10 : pos + 1;
+  const fc = stats.counts.miss === 0 && stats.judged > 0;
+  lastRun = { diff, team: teamKey, score: stats.score, acc: Math.round(acc * 10000) / 100, combo: stats.maxCombo, fc, submitted: false };
+  $("rPos").textContent = "P" + pos;
+  const badge = $("rBadge");
+  badge.hidden = !(fc || pos <= 3);
+  badge.textContent = fc ? "FASTEST LAP" : "PODIUM";
+  badge.style.background = fc ? "var(--purple)" : "var(--yellow)";
+  badge.style.boxShadow = fc ? "0 0 16px var(--purple)" : "0 0 16px var(--yellow)";
+  $("rEyebrow").textContent = `CHEQUERED FLAG · ${team.name} · ${diff.toUpperCase()}`;
+  $("rLap").textContent = fmtLap(lapOf(stats.score));
+  $("rScore").textContent = fmtScore(stats.score);
+  $("rAcc").textContent = (acc * 100).toFixed(2) + "%";
+  $("rCombo").textContent = stats.maxCombo;
+  $("rSectors").innerHTML = [0, 1, 2].map(i => `<span style="background:${secColor(i)}">S${i + 1}</span>`).join("");
+  $("rJudges").innerHTML = ["purple", "green", "yellow", "miss"].map(k =>
+    `<div><b style="color:${JUDGE[k].color}">${stats.counts[k]}</b><small style="color:${JUDGE[k].color}">${JUDGE[k].label}</small></div>`).join("");
+  const key = bestKey(), prev = store.get(key, 0), rb = $("rBest");
+  if (stats.score > prev) { store.set(key, stats.score); rb.textContent = "NEW PERSONAL BEST"; rb.className = "best newbest"; }
+  else { rb.textContent = `이 기기 최고 ${fmtScore(prev)}`; rb.className = "best"; }
+  $("resultDuo").appendChild(ui.tower);
+  setTowerDiff(diff);
+  refreshSubmit();
+  ui.result.hidden = false;
+  if (lb.ready) ui.nick.focus(); else $("retryBtn").focus();
+}
+const bestKey = () => `st-best-${teamKey}-${diff}`;
+
+/* ---------- online leaderboard (Vercel API + Redis, timing tower) ---------- */
+// Each browser gets a random player id and a secret; the server keeps only the secret's hash,
+// so only that browser can update its own row. One best score per player per class.
+const API = "api/scores";
+const lb = { ready: false, myId: null, secret: null, rows: [], towerDiff: diff, offlineMsg: "", timer: null, busy: false };
+const cleanNick = s => s.replace(/[\u0000-\u001f\u007f<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 12);
+const randHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("");
+
+async function initLeaderboard() {
+  lb.myId = store.get("st-player", null);
+  lb.secret = store.get("st-secret", null);
+  if (!lb.myId || !lb.secret) {
+    lb.myId = randHex(16); lb.secret = randHex(32);
+    store.set("st-player", lb.myId); store.set("st-secret", lb.secret);
+  }
+  try {
+    await fetchTower(true);
+  } catch {
+    return towerOffline("온라인 리더보드에 연결하지 못했어요. 지금은 이 기기의 최고 기록만 저장돼요.");
+  }
+  lb.ready = true;
+  renderTower(); refreshSubmit();
+  lb.timer = setInterval(() => {
+    if (!document.hidden && (state === "menu" || state === "result")) fetchTower().catch(() => {});
+  }, 15000);
+}
+async function fetchTower(strict) {
+  const d = lb.towerDiff;
+  const res = await fetch(`${API}?diff=${d}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(res.status);
+  const data = await res.json();
+  if (d !== lb.towerDiff) return;            // tab changed while loading
+  lb.rows = (data.rows || []).map(r => ({
+    id: String(r.id || ""), nick: r.nick, score: Math.max(0, Math.min(1e6, Math.round(+r.score || 0))),
+    run: { team: r.team, acc: r.acc, combo: r.combo, fc: !!r.fc },
+  }));
+  if (!strict) renderTower();
+}
+function towerOffline(msg) {
+  lb.ready = false; lb.offlineMsg = msg;
+  ui.towerList.innerHTML = "";
+  ui.towerNote.textContent = msg;
+  refreshSubmit();
+}
+function setTowerDiff(d) {
+  lb.towerDiff = d;
+  document.querySelectorAll(".tower-tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.diff === d)));
+  if (lb.ready) { ui.towerNote.textContent = "기록을 불러오는 중…"; fetchTower().catch(() => { ui.towerNote.textContent = "순위를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."; }); }
+}
+const isMe = r => lb.myId && r.id && lb.myId.startsWith(r.id);
+function renderTower() {
+  if (!lb.ready) return;
+  const list = ui.towerList, rows = lb.rows;
+  list.innerHTML = "";
+  if (!rows.length) {
+    const li = document.createElement("li"); li.className = "tower-empty";
+    li.textContent = "아직 기록이 없어요. 첫 번째로 체커기를 받아 보세요.";
+    list.appendChild(li);
+  }
+  const leadLap = rows.length ? lapOf(rows[0].score) : 0;
+  rows.forEach((r, i) => {
+    const li = document.createElement("li");
+    if (isMe(r)) li.className = "me";
+    const pos = document.createElement("span"); pos.className = "t-pos"; pos.textContent = i + 1;
+    const bar = document.createElement("span"); bar.className = "t-bar";
+    const tm = TEAMS[r.run.team] || TEAMS.senatus;
+    bar.style.background = `linear-gradient(${tm.a}, ${tm.b})`;
+    const nick = document.createElement("span"); nick.className = "t-nick";
+    nick.textContent = typeof r.nick === "string" && r.nick ? cleanNick(r.nick) : "DRIVER";
+    const chip = document.createElement("span"); chip.className = "t-chip" + (r.run.fc ? "" : " none"); chip.textContent = "FC";
+    chip.title = "풀콤보";
+    const gap = document.createElement("span"); gap.className = "t-gap" + (i === 0 ? " lead" : "");
+    gap.textContent = i === 0 ? fmtLap(leadLap) : "+" + (lapOf(r.score) - leadLap).toFixed(3);
+    li.append(pos, bar, nick, chip, gap);
+    li.title = `${fmtScore(r.score)}점 · 정확도 ${r.run.acc ?? "-"}% · 최대 콤보 ${r.run.combo ?? "-"}`;
+    list.appendChild(li);
+  });
+  const mine = rows.findIndex(isMe);
+  ui.towerNote.textContent = mine >= 0
+    ? `내 순위 P${mine + 1} · ${fmtScore(rows[mine].score)}점. 행에 마우스를 올리면 정확도와 콤보가 보여요.`
+    : "레이스를 마치고 닉네임을 적어 제출하면 이 타이밍 타워에 올라갑니다. (상위 50위까지 표시)";
+}
+function refreshSubmit() {
+  if (!lb.ready) {
+    ui.nick.disabled = true; ui.submitBtn.disabled = true;
+    setMsg(lb.offlineMsg, "");
+    return;
+  }
+  ui.nick.disabled = false;
+  ui.submitBtn.disabled = !lastRun || lastRun.submitted || lb.busy;
+  if (!lastRun || !lastRun.submitted) setMsg("", "");
+  if (!ui.nick.value) ui.nick.value = store.get("st-nick", "");
+}
+function setMsg(text, kind) { ui.submitMsg.textContent = text; ui.submitMsg.className = "hint" + (kind ? " " + kind : ""); }
+
+ui.submitForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!lb.ready || !lastRun || lastRun.submitted || lb.busy) return;
+  const nick = cleanNick(ui.nick.value);
+  if (!nick) { setMsg("닉네임을 1~12자로 적어 주세요.", "err"); ui.nick.focus(); return; }
+  lb.busy = true; ui.submitBtn.disabled = true; setMsg("제출하는 중…", "");
+  try {
+    const res = await fetch(API, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerId: lb.myId, secret: lb.secret, nick, diff: lastRun.diff, team: lastRun.team,
+                             score: lastRun.score, acc: lastRun.acc, combo: lastRun.combo, fc: lastRun.fc }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || res.status), { code: data.error });
+    lastRun.submitted = true; store.set("st-nick", nick);
+    setMsg(data.improved
+      ? `${lastRun.diff.toUpperCase()} 그리드 P${data.rank}에 올랐어요.`
+      : `기존 기록 ${fmtScore(data.previous)}점이 더 높아서 그대로 두고 닉네임만 바꿨어요.`, "ok");
+    setTowerDiff(lastRun.diff);
+  } catch (err) {
+    ui.submitBtn.disabled = false;
+    setMsg(err.code === "not_owner" ? "이 기기의 기록 정보가 맞지 않아 제출할 수 없어요."
+         : err.code === "rate_limited" ? "제출이 너무 잦아요. 잠시 후 다시 눌러 주세요."
+         : "제출하지 못했어요. 잠시 후 다시 눌러 주세요.", "err");
+  } finally {
+    lb.busy = false;
+  }
+});
+document.querySelector(".tower-tabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (b) setTowerDiff(b.dataset.diff);
+});
+
+/* ---------- drawing ---------- */
+function rrect(x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+function quad(a, b, c, d) { g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.lineTo(...c); g.lineTo(...d); g.closePath(); }
+
+function forBeats(now, every, maxS, fn) {
+  const maxDt = (1 / maxS - 1) / C;
+  const k0 = Math.ceil((now - 0.6 - beatO) / (beatP * every));
+  for (let k = k0; ; k++) {
+    const t = beatO + k * beatP * every, dt = t - now;
+    if (dt > maxDt) break;
+    fn(k, dt, sOf(dt));
+  }
+}
+
+function drawWorld(now, pulse, od) {
+  g.drawImage(bgLayer, 0, 0, W, H);
+  const sb = sBottom();
+  g.lineWidth = 1;
+  forBeats(now, 1, 0.03, (k, dt, s) => {
+    if (s > sb) return;
+    const y = P(0, s)[1];
+    g.strokeStyle = `rgba(255,43,214,${Math.min(0.35, s * 0.4)})`;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+  });
+  g.strokeStyle = "rgba(39,243,255,0.14)";
+  for (const o of [1.7, 2.6, 4, 6, 9, 14]) for (const sg of [-1, 1]) {
+    g.beginPath(); g.moveTo(G.cx, G.hy); g.lineTo(...P(o * sg, sb)); g.stroke();
+  }
+  const asp = g.createLinearGradient(0, G.hy, 0, H);
+  asp.addColorStop(0, "#0d0b22"); asp.addColorStop(1, "#17142e");
+  g.fillStyle = asp; quad(P(-1, 0), P(1, 0), P(1, sb), P(-1, sb)); g.fill();
+  forBeats(now, 0.5, 0.02, (k, dt, s0) => {
+    const s1 = sOf(dt + beatP * 0.5);
+    if (s0 < 0.02) return;
+    const a = Math.min(s0, sb + 0.3), b = Math.min(s1, sb + 0.3);
+    g.fillStyle = k % 2 ? team.kerbA : team.kerbB;
+    g.globalAlpha = 0.85;
+    quad(P(-1.1, b), P(-1, b), P(-1, a), P(-1.1, a)); g.fill();
+    quad(P(1, b), P(1.1, b), P(1.1, a), P(1, a)); g.fill();
+    g.globalAlpha = 1;
+  });
+  g.strokeStyle = "rgba(255,255,255,0.08)"; g.lineWidth = 1;
+  for (const o of [-0.5, 0, 0.5]) { g.beginPath(); g.moveTo(G.cx, G.hy); g.lineTo(...P(o, sb)); g.stroke(); }
+  forBeats(now, 1, 0.04, (k, dt, s) => {
+    if (s > sb) return;
+    const isBar = ((k % 4) + 4) % 4 === 0;
+    g.strokeStyle = isBar ? `rgba(39,243,255,${0.5 * Math.min(1, s * 1.5)})` : `rgba(255,255,255,${0.12 * Math.min(1, s * 1.5)})`;
+    g.lineWidth = isBar ? 2 : 1;
+    g.beginPath(); g.moveTo(...P(-1, s)); g.lineTo(...P(1, s)); g.stroke();
+  });
+  g.save();
+  g.shadowBlur = 18 + pulse * 14;
+  g.lineWidth = 3;
+  g.shadowColor = team.glow; g.strokeStyle = team.a;
+  g.beginPath(); g.moveTo(G.cx, G.hy); g.lineTo(...P(-1, sb)); g.stroke();
+  g.shadowColor = od ? PINK : team.glow; g.strokeStyle = od ? PINK : team.b;
+  g.beginPath(); g.moveTo(G.cx, G.hy); g.lineTo(...P(1, sb)); g.stroke();
+  g.restore();
+  g.save();
+  forBeats(now, 2, 0.06, (k, dt, s) => {
+    if (s > sb * 1.6) return;
+    const hpx = (G.jy - G.hy) * 0.8 * s;
+    for (const side of [-1, 1]) {
+      const [x, y] = P(side * 1.42, s);
+      g.strokeStyle = "#2a2450"; g.lineWidth = Math.max(1, 3 * s);
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - hpx); g.lineTo(x - side * 18 * s, y - hpx); g.stroke();
+      const lx = x - side * 18 * s, ly = y - hpx;
+      const r = 34 * s * (1 + pulse * 0.25);
+      g.globalCompositeOperation = "lighter";
+      const rg = g.createRadialGradient(lx, ly, 0, lx, ly, r);
+      rg.addColorStop(0, "rgba(255,245,225,0.9)"); rg.addColorStop(0.25, "rgba(255,190,255,0.35)"); rg.addColorStop(1, "rgba(0,0,0,0)");
+      g.fillStyle = rg; g.fillRect(lx - r, ly - r, r * 2, r * 2);
+      g.globalCompositeOperation = "source-over";
+    }
+  });
+  g.restore();
+  forBeats(now, 16, 0.08, (k, dt, s) => {
+    if (s > 2.2) return;
+    const hpx = (G.jy - G.hy) * 0.7 * s;
+    const [xl, yl] = P(-1.22, s), [xr] = P(1.22, s);
+    const beamH = Math.max(6, 30 * s), top = yl - hpx - beamH;
+    g.fillStyle = "#140f2e";
+    g.fillRect(xl - 3 * s, top, 6 * s, hpx + beamH); g.fillRect(xr - 3 * s, top, 6 * s, hpx + beamH);
+    g.fillStyle = "#0a0820"; g.fillRect(xl, top, xr - xl, beamH);
+    g.save();
+    g.strokeStyle = CYAN; g.shadowColor = CYAN; g.shadowBlur = 12; g.lineWidth = Math.max(1, 2 * s);
+    g.strokeRect(xl, top, xr - xl, beamH);
+    const txt = GANTRY_TEXT[((k % 4) + 4) % 4];
+    g.font = `italic 800 ${Math.max(6, beamH * 0.72)}px ${FONT}`;
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = PINK; g.shadowColor = PINK;
+    g.fillText(txt, (xl + xr) / 2, top + beamH / 2 + 1);
+    g.restore();
+  });
+}
+
+function drawLanesAndNotes(now, pulse) {
+  const t = performance.now() / 1000;
+  for (let l = 0; l < 4; l++) {
+    const age = t - lanePress[l];
+    const a = laneHeld[l] ? 0.32 : Math.max(0, 0.32 * (1 - age / 0.2));
+    if (a <= 0) continue;
+    const o0 = -1 + l * 0.5, o1 = o0 + 0.5;
+    const [, ytop] = P(0, 0.45);
+    const gr = g.createLinearGradient(0, G.jy, 0, ytop);
+    gr.addColorStop(0, hexA(team.lanes[l], a)); gr.addColorStop(1, hexA(team.lanes[l], 0));
+    g.fillStyle = gr; quad(P(o0, 0.45), P(o1, 0.45), P(o1, 1), P(o0, 1)); g.fill();
+  }
+  g.save();
+  g.shadowColor = "#ffffff"; g.shadowBlur = 14 + pulse * 10;
+  g.strokeStyle = "rgba(255,255,255,0.9)"; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(...P(-1, 1)); g.lineTo(...P(1, 1)); g.stroke();
+  const lw = G.hw * 0.5;
+  for (let l = 0; l < 4; l++) {
+    const cx = P(-0.75 + l * 0.5, 1)[0];
+    const lit = laneHeld[l] || t - lanePress[l] < 0.1;
+    g.shadowColor = team.lanes[l]; g.shadowBlur = lit ? 22 : 8;
+    g.strokeStyle = team.lanes[l]; g.lineWidth = lit ? 3 : 1.5;
+    rrect(cx - lw * 0.42, G.jy - 9, lw * 0.84, 18, 5); g.stroke();
+    if (lit) { g.fillStyle = hexA(team.lanes[l], 0.35); g.fill(); }
+  }
+  g.shadowBlur = 0;
+  g.font = `700 ${Math.round(Math.min(16, lw * 0.22))}px ${FONT}`;
+  g.textAlign = "center"; g.textBaseline = "top"; g.fillStyle = "rgba(255,255,255,0.45)";
+  if (W >= 640) for (let l = 0; l < 4; l++) g.fillText(KEY_LABELS[l], P(-0.75 + l * 0.5, 1)[0], G.jy + 14);
+  g.restore();
+
+  if (state !== "play" && state !== "paused") return;
+  g.save();
+  g.shadowBlur = 16;
+  const maxDt = (1 / 0.22 - 1) / C;
+  for (let i = missPtr; i < notes.length; i++) {
+    const n = notes[i];
+    const dt = n.t - now;
+    if (dt > maxDt) break;
+    if (n.done) continue;
+    const s = sOf(dt);
+    const alpha = Math.min(1, (s - 0.22) / 0.12);
+    const o0 = -1 + n.lane * 0.5 + 0.05, o1 = o0 + 0.4;
+    const [x0, y] = P(o0, s), [x1] = P(o1, s);
+    const h = Math.max(4, 20 * s * Math.min(1.3, H / 800));
+    const col = team.lanes[n.lane];
+    g.globalAlpha = alpha;
+    g.shadowColor = col;
+    const ng = g.createLinearGradient(0, y - h / 2, 0, y + h / 2);
+    ng.addColorStop(0, col); ng.addColorStop(0.5, "#ffffff"); ng.addColorStop(1, col);
+    g.fillStyle = ng;
+    rrect(x0, y - h / 2, x1 - x0, h, Math.min(6, h / 2)); g.fill();
+  }
+  g.restore();
+}
+
+function drawFx() {
+  const t = performance.now() / 1000;
+  g.save();
+  g.globalCompositeOperation = "lighter";
+  fx = fx.filter(f => t - f.at < 0.32);
+  for (const f of fx) {
+    const k = (t - f.at) / 0.32;
+    g.strokeStyle = hexA(f.c, 1 - k); g.lineWidth = 3 * (1 - k) + 1;
+    g.beginPath(); g.ellipse(f.x, f.y, 14 + k * 60, (14 + k * 60) * 0.42, 0, 0, Math.PI * 2); g.stroke();
+  }
+  const dt = Math.min(0.05, t - (drawFx.last || t)); drawFx.last = t;
+  sparks = sparks.filter(p => (p.life -= dt) > 0);
+  for (const p of sparks) {
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 600 * dt;
+    g.fillStyle = hexA(p.c, p.life / 0.5);
+    g.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  }
+  g.restore();
+}
+
+function drawCombo() {
+  if (state !== "play" && state !== "paused") return;
+  const t = performance.now() / 1000;
+  const midY = G.hy + (G.jy - G.hy) * 0.45;
+  g.save(); g.textAlign = "center"; g.textBaseline = "middle";
+  if (stats.combo >= 3) {
+    const od = stats.combo >= 50;
+    g.font = `italic 800 ${Math.round(Math.min(72, W * 0.13))}px ${FONT}`;
+    g.fillStyle = "rgba(255,255,255,0.9)"; g.shadowColor = od ? PINK : team.glow; g.shadowBlur = 20;
+    g.fillText(stats.combo, G.cx, midY);
+    g.font = `700 13px ${FONT}`; g.shadowBlur = 8;
+    g.fillStyle = od ? PINK : "rgba(255,255,255,0.6)";
+    g.fillText(od ? "HYPERDRIVE" : "COMBO", G.cx, midY + Math.min(44, W * 0.08));
+  }
+  if (lastJudge && t - lastJudge.at < 0.55) {
+    const j = JUDGE[lastJudge.kind], k = (t - lastJudge.at) / 0.55;
+    const y = G.jy - (G.jy - G.hy) * 0.18 - (reduceMotion ? 0 : k * 10);
+    g.globalAlpha = 1 - k * k;
+    g.font = `italic 800 ${Math.round(Math.min(34, W * 0.075))}px ${FONT}`;
+    g.fillStyle = j.color; g.shadowColor = j.color; g.shadowBlur = 16;
+    g.fillText(j.label, G.cx, y);
+    if (lastJudge.kind !== "miss" && lastJudge.kind !== "purple") {
+      g.font = `700 12px ${FONT}`; g.shadowBlur = 0; g.fillStyle = "rgba(255,255,255,0.7)";
+      g.fillText(lastJudge.dt < 0 ? "EARLY" : "LATE", G.cx, y + 22);
+    }
+  }
+  g.restore();
+}
+
+// HUD stays clear of the MV screen: beside it on wide layouts, in a row below it on narrow ones.
+function drawHud(now) {
+  if (state !== "play" && state !== "paused") return;
+  const pad = 14, top = G.hudRow;
+  g.save();
+  g.textBaseline = "top"; g.textAlign = "left";
+  const sx = 62;
+  g.font = `700 11px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.55)";
+  g.fillText("SCORE", sx, top);
+  g.font = `italic 800 ${narrow ? 24 : 30}px ${FONT}`; g.fillStyle = "#fff";
+  g.fillText(fmtScore(stats.score), sx, top + 13);
+  const acc = stats.judged ? (stats.pts / (stats.judged * 100)) * 100 : 100;
+  g.font = `700 12px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.6)";
+  g.fillText(`ACC ${acc.toFixed(2)}%`, sx, top + (narrow ? 40 : 46));
+  const target = 150 + Math.min(stats.combo, 84) * 2.5;
+  speed += (target - speed) * 0.06;
+  const r = narrow ? 30 : 38, cx = W - pad - r - 4, cy = top + r + 2;
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, f = Math.min(1, (speed - 100) / 260);
+  g.lineCap = "round"; g.lineWidth = 5;
+  g.strokeStyle = "rgba(255,255,255,0.12)"; g.beginPath(); g.arc(cx, cy, r, a0, a1); g.stroke();
+  g.strokeStyle = stats.combo >= 50 ? PINK : team.b; g.shadowColor = g.strokeStyle; g.shadowBlur = 12;
+  g.beginPath(); g.arc(cx, cy, r, a0, a0 + (a1 - a0) * f); g.stroke(); g.shadowBlur = 0;
+  const gear = Math.max(1, Math.min(8, 1 + Math.floor(f * 8)));
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.font = `italic 800 ${narrow ? 22 : 28}px ${FONT}`; g.fillStyle = "#fff";
+  g.fillText(gear, cx, cy - 3);
+  g.font = `700 ${narrow ? 9 : 11}px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.7)";
+  g.fillText(`${Math.round(speed)} KM/H`, cx, cy + r * 0.72);
+  // lap progress with sector colours, along the bottom edge
+  const bw = Math.min(360, W - pad * 2), bx = (W - bw) / 2, by = H - 12;
+  const prog = Math.max(0, Math.min(1, now / songLen));
+  g.textAlign = "left"; g.textBaseline = "bottom"; g.font = `700 11px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.55)";
+  g.fillText("LAP 1/1", bx, by - 3);
+  g.textAlign = "right"; g.fillStyle = "rgba(255,255,255,0.8)";
+  g.fillText(`${fmtLap(Math.max(0, now))} / ${fmtLap(songLen)}`, bx + bw, by - 3);
+  for (let i = 0; i < 3; i++) {
+    const x = bx + (bw / 3) * i + (i ? 2 : 0), w = bw / 3 - 2;
+    g.fillStyle = "rgba(255,255,255,0.1)"; g.fillRect(x, by, w, 4);
+    const segP = Math.max(0, Math.min(1, prog * 3 - i));
+    if (segP > 0) { g.fillStyle = secColor(i); g.fillRect(x, by, w * segP, 4); }
+  }
+  g.restore();
+}
+
+function drawLights(now) {
+  if (state !== "play" && state !== "paused") return;
+  if (now > 1.0 || now < -3.4) return;
+  const r = Math.min(14, W * 0.03), gap = r * 2.7;
+  const y = G.hy + (G.jy - G.hy) * 0.2, x0 = G.cx - gap * 2;
+  g.save();
+  g.fillStyle = "rgba(5,5,15,0.85)"; rrect(x0 - r * 1.6, y - r * 1.6, gap * 4 + r * 3.2, r * 3.2, 6); g.fill();
+  for (let i = 0; i < 5; i++) {
+    const on = now < 0 && now >= -3 + i * 0.5;
+    g.beginPath(); g.arc(x0 + i * gap, y, r, 0, Math.PI * 2);
+    g.fillStyle = on ? "#ff1a2e" : "#2a0a10"; g.shadowColor = "#ff1a2e"; g.shadowBlur = on ? 24 : 0; g.fill();
+  }
+  g.shadowBlur = 0;
+  if (now >= 0) {
+    g.globalAlpha = 1 - now;
+    g.font = `italic 800 ${Math.round(Math.min(48, W * 0.1))}px ${FONT}`;
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#fff"; g.shadowColor = PINK; g.shadowBlur = 24;
+    g.fillText("LIGHTS OUT", G.cx, y + r * 3.6);
+  }
+  g.restore();
+}
+
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.max(0, Math.min(1, a))})`;
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  if (!G) return;
+  syncClock();
+  let now;
+  if (state === "play" || state === "paused") {
+    now = songNow();
+    if (state === "play" && clock.running) { sweepMisses(now); if (now > songEnd) finish(); }
+  } else {
+    now = performance.now() / 1000 * 0.9; C = 2;
+  }
+  const ph = ((now - beatO) / beatP) % 1, pulse = reduceMotion ? 0 : Math.pow(1 - (ph < 0 ? ph + 1 : ph), 3);
+  const od = stats && stats.combo >= 50 && state === "play";
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (shake > 0.2) { g.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake); shake *= 0.85; }
+  drawWorld(now, pulse, od);
+  drawLanesAndNotes(now, pulse);
+  drawFx();
+  drawCombo();
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawHud(now);
+  drawLights(now);
+}
+
+/* ---------- input ---------- */
+window.addEventListener("keydown", e => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (e.code in KEYMAP) {
+    if (state === "play") e.preventDefault();
+    if (e.repeat) return;
+    const l = KEYMAP[e.code]; laneHeld[l] = true; press(l); return;
+  }
+  if (e.code === "Escape" || e.code === "KeyP") {
+    if (state === "play") pauseGame(); else if (state === "paused") resumeGame();
+  }
+});
+window.addEventListener("keyup", e => { if (e.code in KEYMAP) laneHeld[KEYMAP[e.code]] = false; });
+const pointerLane = new Map();
+cvs.addEventListener("pointerdown", e => {
+  if (state !== "play") return;
+  e.preventDefault();
+  const r = cvs.getBoundingClientRect(), x = e.clientX - r.left;
+  const l = Math.max(0, Math.min(3, Math.floor((x - (G.cx - G.hw)) / (G.hw * 0.5))));
+  pointerLane.set(e.pointerId, l); laneHeld[l] = true; press(l);
+});
+const release = e => { const l = pointerLane.get(e.pointerId); if (l != null) { laneHeld[l] = false; pointerLane.delete(e.pointerId); } };
+cvs.addEventListener("pointerup", release); cvs.addEventListener("pointercancel", release);
+document.addEventListener("visibilitychange", () => { if (document.hidden) pauseGame(); });
+window.addEventListener("resize", resize);
+
+/* ---------- menu wiring ---------- */
+function applyTeam() {
+  team = TEAMS[teamKey];
+  document.documentElement.style.setProperty("--team-a", team.a);
+  document.documentElement.style.setProperty("--team-b", team.b);
+  document.querySelectorAll("#teamSeg button").forEach(b => b.classList.toggle("on", b.dataset.team === teamKey));
+  if (G) buildBg();
+}
+function refreshMenu() {
+  document.querySelectorAll("#diffSeg button").forEach(b => b.classList.toggle("on", b.dataset.diff === diff));
+  ui.offset.value = offsetMs; ui.offsetOut.value = (offsetMs > 0 ? "+" : "") + offsetMs + " ms";
+  const best = store.get(bestKey(), 0);
+  ui.bestLine.textContent = best ? `이 기기 최고 · ${team.name} ${diff.toUpperCase()} · ${fmtScore(best)}` : "";
+}
+$("teamSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  teamKey = b.dataset.team; store.set("st-team", teamKey); applyTeam(); refreshMenu();
+});
+$("diffSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  diff = b.dataset.diff; store.set("st-diff", diff); refreshMenu(); setTowerDiff(diff);
+});
+ui.offset.addEventListener("input", () => { offsetMs = +ui.offset.value; store.set("st-offset", offsetMs); refreshMenu(); });
+ui.startBtn.addEventListener("click", startRace);
+$("retryBtn").addEventListener("click", startRace);
+$("menuBtn").addEventListener("click", toMenu);
+$("resumeBtn").addEventListener("click", () => resumeGame());
+$("quitBtn").addEventListener("click", toMenu);
+ui.pauseBtn.addEventListener("click", () => pauseGame());
+
+if (BG_SRC) {
+  const img = new Image();
+  img.onload = () => { bgImg = img; if (G) buildBg(); };
+  img.src = BG_SRC;
+}
+applyTeam(); refreshMenu(); resize(); refreshStart();
+loadYouTube();
+setTowerDiff(diff);
+initLeaderboard();
+if (document.fonts && document.fonts.load) document.fonts.load(`800 20px ${FONT}`).catch(() => {});
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
