@@ -2,8 +2,9 @@
 
 usage: python build_chart.py <audio> <out.json> [--start SEC] [--end SEC] [--hyper-bar N]
 
-MV:    --end 205 --hyper-bar 104 --rush-from 100 --dance-bars 48:56 --finish 206   (the car crosses the line at 3:26)
-album: --end 176 --hyper-bar 104 --rush-from 100 --dance-bars 48:56
+MV:    --end 205 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.5:137.146 --finish 206
+album: --end 176 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.58:137.223
+(3:26 is when the car crosses the line in the MV; the woah section starts at 2:01)
 
 Star Trace sits at 175 BPM (beat 0.342857 s). Onset autocorrelation peaks at the
 175 BPM eighth (0.171 s) and is flat at the 116.67 BPM eighth, so 116.67 (2/3 of
@@ -23,7 +24,9 @@ ap.add_argument("--start", type=float, default=1.5, help="no notes before this t
 ap.add_argument("--end", type=float, default=None, help="no notes after this time (s)")
 ap.add_argument("--hyper-bar", type=int, default=None, help="bar index where the x2 HYPERDRIVE section starts")
 ap.add_argument("--finish", type=float, default=None, help="time (s) the finish line crosses the judge line")
+ap.add_argument("--go-early", type=float, default=0, help="beats before the hyper bar where the sung \"Go\" lands (x2 starts there)")
 ap.add_argument("--rush-from", type=int, default=None, help="bar index where the pre-Go build-up rush starts")
+ap.add_argument("--vocal-range", default=None, help="START:END seconds where long notes follow the sung notes (the 2:01 woah section)")
 ap.add_argument("--dance-bars", default=None, help="START:END bar indices of the x1.5 dance break, e.g. 48:56")
 args = ap.parse_args()
 
@@ -86,6 +89,7 @@ end = args.end if args.end is not None else dur - 3
 
 # HYPERDRIVE: from the bar after "Go" (EDM drop) to the end, notes scroll twice as fast and get denser.
 hyper_t = b0 + args.hyper_bar * 4 * BEAT if args.hyper_bar is not None else None
+go_t = hyper_t - args.go_early * BEAT if hyper_t is not None else None  # the sung "Go": chord + x2 start
 s16 = np.array([peak(env, t) for t in b0 + np.arange(nsteps * 2) * STEP / 2])  # sixteenth-note strengths
 
 
@@ -131,7 +135,69 @@ def build(hard):
         hyper = hyper_t is not None and t >= hyper_t - 1e-3
         if kind == "q" and s % PER_BAR == 0 and (hyper or (hard and bar % 2 == 0 and e_norm[bar] > 0.7)):
             out.append([round(float(t), 3), (3 - lane) if 3 - lane != lane else (lane + 2) % 4])
-    return add_rush(add_holds(out, hard), hard)
+    return add_rush(add_vocal(add_holds(out, hard), hard), hard)
+
+
+def vocal_notes(v0, v1):
+    """Sustained sung notes (pyin on the harmonic part) between v0 and v1, snapped to the eighth grid."""
+    a, b = int(v0 * sr), int(v1 * sr)
+    yh, _ = librosa.effects.hpss(y[a:b], margin=3.0)
+    f0, voiced, _ = librosa.pyin(yh, fmin=150, fmax=900, sr=sr, frame_length=2048, hop_length=256)
+    tt = librosa.times_like(f0, sr=sr, hop_length=256) + v0
+    segs, cur = [], None
+    for t, f, v in zip(tt, f0, voiced):
+        if v and not np.isnan(f):
+            m = float(librosa.hz_to_midi(f))
+            if cur and abs(m - cur["m"]) < 1.6 and t - cur["e"] < 0.06:
+                cur["e"] = t; cur["ms"].append(m); cur["m"] = float(np.median(cur["ms"][-8:]))
+                continue
+            if cur: segs.append(cur)
+            cur = {"s": t, "e": t, "m": m, "ms": [m]}
+        elif cur and t - cur["e"] > 0.06:
+            segs.append(cur); cur = None
+    if cur: segs.append(cur)
+    snap = lambda t: b0 + round((t - b0) / STEP) * STEP
+    notes, last_end = [], -1
+    for sg in segs:
+        pitch = float(np.median(sg["ms"]))
+        if sg["e"] - sg["s"] < 0.3 or pitch < 60:   # skip short blips and low instruments
+            continue
+        st, en = max(snap(sg["s"]), last_end + STEP), min(snap(sg["e"]), v1 - STEP)
+        if en - st < 2 * STEP - 1e-3:
+            continue
+        notes.append((st, en, pitch)); last_end = en
+    return notes
+
+
+def add_vocal(out, hard):
+    """The woah section: long notes as long as each sung note, lane by pitch (higher = further right).
+    Beats between them stay as taps; on HARD a tap also lands on every beat during a long note."""
+    if not args.vocal_range:
+        return out
+    v0, v1 = (float(x) for x in args.vocal_range.split(":"))
+    sung = vocal_notes(v0, v1)
+    out = [n for n in out if not (v0 <= n[0] < v1) and not (len(n) > 2 and n[0] < v1 and n[0] + n[2] > v0)]
+    lo, hi = min(p for *_, p in sung), max(p for *_, p in sung)
+    prev = None
+    for st, en, pitch in sung:
+        lane = int(round((pitch - lo) / max(1e-6, hi - lo) * 3))
+        if prev and lane == prev[1] and st - prev[2] < 0.35:
+            lane = lane + 1 if lane < 3 else lane - 1
+        out.append([round(float(st), 3), lane, round(float(en - st), 3)])
+        prev = (st, lane, en)
+    k0 = int(np.ceil((v0 - b0) / BEAT))
+    i = 0
+    for k in range(k0, int((v1 - b0) / BEAT) + 1):
+        tb = b0 + k * BEAT
+        if tb >= v1 - 1e-3:
+            break
+        held = [(st, en, l) for st, en, l in ((n[0], n[0] + n[2], n[1]) for n in out if len(n) > 2) if st - 0.05 <= tb <= en + 0.05]
+        if held:
+            if hard and abs(tb - held[0][0]) > 1e-3:
+                out.append([round(float(tb), 3), (held[0][2] + 2) % 4])
+        else:
+            out.append([round(float(tb), 3), 1 + i % 2]); i += 1
+    return sorted(out, key=lambda n: (n[0], n[1]))
 
 
 def add_rush(out, hard):
@@ -140,14 +206,15 @@ def add_rush(out, hard):
     if args.rush_from is None or hyper_t is None:
         return out
     r0 = b0 + args.rush_from * 4 * BEAT
-    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t + 1e-3) and not (len(n) > 2 and n[0] + n[2] > r0)]
+    # clear the rush window (up to, not including, the drop downbeat) and any long note reaching into it
+    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3) and not (len(n) > 2 and n[0] < r0 < n[0] + n[2])]
     t, i = r0, 0
-    while t < hyper_t - 1e-3:
+    while t < go_t - 1e-3:
         out.append([round(float(t), 3), 1 + i % 2])
         fast = hard and t >= r0 + 4 * BEAT - 1e-3   # HARD: sixteenths after the first bar
         t += STEP / 2 if fast else STEP
         i += 1
-    out += [[round(float(hyper_t), 3), 0], [round(float(hyper_t), 3), 3]]
+    out += [[round(float(go_t), 3), 0], [round(float(go_t), 3), 3]]
     return sorted(out, key=lambda n: (n[0], n[1]))
 
 
@@ -212,7 +279,7 @@ if args.dance_bars:
     a_, b_ = (int(x) for x in args.dance_bars.split(":"))
     zones.append({"t0": round(float(b0 + a_ * 4 * BEAT), 3), "t1": round(float(b0 + b_ * 4 * BEAT), 3), "mul": 1.5, "kind": "dance"})
 if hyper_t is not None:
-    zones.append({"t0": round(float(hyper_t), 3), "t1": round(dur + 5, 3), "mul": 2, "kind": "hyper"})
+    zones.append({"t0": round(float(go_t), 3), "t1": round(dur + 5, 3), "mul": 2, "kind": "hyper"})
 
 normal, hard = build(False), build(True)
 for name, c in (("normal", normal), ("hard", hard)):
@@ -220,7 +287,7 @@ for name, c in (("normal", normal), ("hard", hard)):
     nh = sum(1 for n in c if len(n) > 2)
     print(f"{name}: {len(c)} notes ({nh} long), {len(c) / (ts[-1] - ts[0]):.2f} nps, {ts[0]:.2f}-{ts[-1]:.2f}s, lanes {np.bincount([n[1] for n in c])}")
 json.dump({"bpm": args.bpm, "beat": round(BEAT, 6), "b0": round(float(b0), 4), "dur": round(dur, 3),
-           "hyper": round(float(hyper_t), 3) if hyper_t is not None else None,
+           "hyper": round(float(go_t), 3) if go_t is not None else None,
            "zones": zones,
            "finish": args.finish,
            "normal": normal, "hard": hard}, open(args.out, "w"), separators=(",", ":"))
