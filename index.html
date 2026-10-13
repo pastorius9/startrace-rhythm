@@ -529,7 +529,7 @@ function stopSong() {
 let lastSeek = 0, seekLead = 0.12;
 function syncVideo() {
   if (!audioMode || state !== "play" || !player) return;
-  const target = AC.currentTime - startAt - lat;        // song position the player hears
+  const target = audioNow();                             // song position the player hears
   if (target < -0.4) return;
   if (playerState !== YT.PlayerState.PLAYING && playerState !== YT.PlayerState.BUFFERING) { player.playVideo(); return; }
   if (!clock.running || clock.samples.length < 8) return;
@@ -610,8 +610,18 @@ function freshStats() {
   return { score: 0, pts: 0, judged: 0, combo: 0, maxCombo: 0, counts: { purple: 0, green: 0, yellow: 0, miss: 0 },
            sec: [[0, 0], [0, 0], [0, 0]], dtSum: 0, dtN: 0 };
 }
+// Song position the listener hears right now. getOutputTimestamp() pairs the sample leaving the
+// speakers with a performance.now() time, which beats guessing from outputLatency.
+const VISUAL_LEAD = 0.03;   // frames reach the screen ~1-2 refreshes after drawing; draw notes this much ahead
+function audioNow() {
+  if (AC.getOutputTimestamp && AC.state === "running") {
+    const ts = AC.getOutputTimestamp();
+    if (ts.contextTime > 0 && ts.performanceTime > 0) return ts.contextTime + (performance.now() - ts.performanceTime) / 1000 - startAt;
+  }
+  return AC.currentTime - startAt - lat;
+}
 function songNow() {
-  return audioMode ? AC.currentTime - startAt - lat - offsetMs / 1000 : mvNow() - MV_OFFSET - offsetMs / 1000;
+  return audioMode ? audioNow() - offsetMs / 1000 : mvNow() - MV_OFFSET - offsetMs / 1000;
 }
 
 function startRace() {
@@ -1422,6 +1432,7 @@ function frame() {
     now = songNow();
     if (state === "play" && (audioMode || clock.running)) { sweepMisses(now); if (now > songEnd) finish(); }
     syncVideo();
+    now += VISUAL_LEAD;
   } else {
     now = performance.now() / 1000 * 0.9; C = 2;
   }
