@@ -6,8 +6,7 @@ const crypto = require("crypto");
 
 const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-const DIFFS = ["normal", "hard"];
-const TEAMS = ["senatus", "juventas"];
+const DIFFS = ["easy", "normal", "hyperdrive"];
 const MAX_SCORE = 1000000;
 
 async function redis(commands) {
@@ -38,7 +37,7 @@ async function top(diff) {
     let r = {};
     try { r = JSON.parse(run || "{}"); } catch {}
     // Only a prefix of the id goes out, enough for a browser to spot its own row.
-    return { id: id.slice(0, 12), nick: nick || "DRIVER", score: scores[i], team: r.team, acc: r.acc, combo: r.combo, fc: !!r.fc };
+    return { id: id.slice(0, 12), nick: nick || "DRIVER", score: scores[i], acc: r.acc, combo: r.combo, fc: !!r.fc };
   });
 }
 
@@ -47,7 +46,6 @@ async function submit(body, ip) {
   if (!/^[0-9a-f]{32}$/.test(id) || !/^[0-9a-f]{64}$/.test(secret)) return [400, { error: "bad_player" }];
   const diff = body.diff, nick = cleanNick(body.nick), score = Math.round(Number(body.score));
   if (!DIFFS.includes(diff) || !nick || !Number.isFinite(score) || score < 0 || score > MAX_SCORE) return [400, { error: "bad_input" }];
-  const team = TEAMS.includes(body.team) ? body.team : "senatus";
 
   // light per-IP limit: 20 submissions per 10 minutes
   const rl = `rl:${sha256(String(ip || "?")).slice(0, 16)}`;
@@ -64,7 +62,7 @@ async function submit(body, ip) {
   if (improved) {
     cmds.push(["ZADD", `lb:${diff}`, String(score), id]);
     cmds.push(["HSET", `p:${id}`, `run:${diff}`, JSON.stringify({
-      team, acc: Math.round(clamp(body.acc, 0, 100) * 100) / 100,
+      acc: Math.round(clamp(body.acc, 0, 100) * 100) / 100,
       combo: Math.round(clamp(body.combo, 0, 5000)), fc: body.fc === true, at: Date.now(),
     })]);
   }
