@@ -7,7 +7,7 @@ PLAVE 'Star Trace' 팬 리듬게임. 야간 네온 F1 서킷 위로 노트가 �
 
 ## 게임
 - 4레인 낙하형. PC는 D·F·J·K, 모바일은 레인 터치.
-- 채보: 175 BPM 격자에 맞춘 고정 채보. NORMAL 421노트, HARD 746노트. MV 음원에서 직접 만들어서 노트 시간이 곧 MV 시간이다(`MV_OFFSET = 0`). 저장소 `pastorius9/workspace`의 `build_chart.py`로 생성.
+- 채보: 175 BPM 격자에 맞춘 고정 채보. NORMAL 421노트, HARD 746노트. MV 음원에서 직접 만들어서 노트 시간이 곧 MV 시간이다(`MV_OFFSET = 0`). `build_chart.py`로 생성: `python build_chart.py <MV 음원> chart.json --end 205` (librosa 필요).
 - MV는 사용자가 "레이스 시작"을 눌러 소리와 함께 재생한다. 게임 화면이 재생 중인 MV를 가리지 않는다(유튜브 플레이어 최소 200×200 유지).
 - 유튜브 조회수 집계 기준은 공개돼 있지 않다. 정상 재생이므로 집계될 가능성이 높지만 보장되지는 않는다.
 
