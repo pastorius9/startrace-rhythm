@@ -2,9 +2,9 @@
 
 usage: python build_chart.py <audio> <out.json> [--start SEC] [--end SEC] [--hyper-bar N]
 
-MV:    --end 205 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.5:137.146 --finish 206
-album: --end 176 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.58:137.223
-(3:26 is when the car crosses the line in the MV; the woah section starts at 2:01)
+MV:    --end 205 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.5:141.1 --finish 206
+album: --end 176 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.58:141.18
+(3:26 is when the car crosses the line in the MV; sung long notes run 2:01-2:21: "woah", then "This is the time of our lives")
 
 Star Trace sits at 175 BPM (beat 0.342857 s). Onset autocorrelation peaks at the
 175 BPM eighth (0.171 s) and is flat at the 116.67 BPM eighth, so 116.67 (2/3 of
@@ -135,7 +135,7 @@ def build(hard):
         hyper = hyper_t is not None and t >= hyper_t - 1e-3
         if kind == "q" and s % PER_BAR == 0 and (hyper or (hard and bar % 2 == 0 and e_norm[bar] > 0.7)):
             out.append([round(float(t), 3), (3 - lane) if 3 - lane != lane else (lane + 2) % 4])
-    return add_rush(add_vocal(add_holds(out, hard), hard), hard)
+    return hand_split(add_rush(add_vocal(add_holds(out, hard), hard), hard))
 
 
 def vocal_notes(v0, v1):
@@ -200,6 +200,38 @@ def add_vocal(out, hard):
     return sorted(out, key=lambda n: (n[0], n[1]))
 
 
+def hand_split(out):
+    """Playability: while a long note is held with one hand (lanes 0-1 = left, 2-3 = right), every other
+    note in its span goes to the other hand, on the matching finger. A note with no free hand is dropped."""
+    hand = lambda l: l // 2
+    other = lambda l: l + 2 if l < 2 else l - 2
+    holds = sorted([n for n in out if len(n) > 2], key=lambda n: n[0])
+    kept_holds = []
+    for h in holds:  # a long note overlapping one on the same hand moves to the other hand
+        busy = [k for k in kept_holds if k[0] < h[0] + h[2] and h[0] < k[0] + k[2]]
+        if any(hand(k[1]) == hand(h[1]) for k in busy):
+            h = [h[0], other(h[1]), h[2]]
+        if any(hand(k[1]) == hand(h[1]) for k in busy):
+            continue
+        kept_holds.append(h)
+    res = list(kept_holds)
+    for n in out:
+        if len(n) > 2:
+            continue
+        lane = n[1]
+        active = [h for h in kept_holds if h[0] - 1e-3 <= n[0] <= h[0] + h[2] + 1e-3 and abs(h[0] - n[0]) > 1e-3]
+        if any(hand(h[1]) == hand(lane) for h in active):
+            lane = other(lane)
+        if any(hand(h[1]) == hand(lane) for h in active):
+            continue
+        res.append([n[0], lane])
+    seen, final = set(), []
+    for n in sorted(res, key=lambda n: (n[0], n[1])):
+        if (n[0], n[1]) not in seen:
+            seen.add((n[0], n[1])); final.append(n)
+    return final
+
+
 def add_rush(out, hard):
     """Build-up before "Go": fast, simple alternating taps on the two middle lanes, then a two-lane
     chord on the outer lanes exactly when the x2 section starts."""
@@ -207,7 +239,7 @@ def add_rush(out, hard):
         return out
     r0 = b0 + args.rush_from * 4 * BEAT
     # clear the rush window (up to, not including, the drop downbeat) and any long note reaching into it
-    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3) and not (len(n) > 2 and n[0] < r0 < n[0] + n[2])]
+    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3)]
     t, i = r0, 0
     while t < go_t - 1e-3:
         out.append([round(float(t), 3), 1 + i % 2])
