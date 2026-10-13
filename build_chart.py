@@ -2,7 +2,8 @@
 
 usage: python build_chart.py <audio> <out.json> [--start SEC] [--end SEC] [--hyper-bar N]
 
-MV:    --end 205 --hyper-bar 104   (album audio: --hyper-bar 104 as well)
+MV:    --end 205 --hyper-bar 104 --rush-from 100 --dance-bars 48:56 --finish 206   (the car crosses the line at 3:26)
+album: --end 176 --hyper-bar 104 --rush-from 100 --dance-bars 48:56
 
 Star Trace sits at 175 BPM (beat 0.342857 s). Onset autocorrelation peaks at the
 175 BPM eighth (0.171 s) and is flat at the 116.67 BPM eighth, so 116.67 (2/3 of
@@ -21,6 +22,9 @@ ap.add_argument("--bpm", type=float, default=175.0)
 ap.add_argument("--start", type=float, default=1.5, help="no notes before this time (s)")
 ap.add_argument("--end", type=float, default=None, help="no notes after this time (s)")
 ap.add_argument("--hyper-bar", type=int, default=None, help="bar index where the x2 HYPERDRIVE section starts")
+ap.add_argument("--finish", type=float, default=None, help="time (s) the finish line crosses the judge line")
+ap.add_argument("--rush-from", type=int, default=None, help="bar index where the pre-Go build-up rush starts")
+ap.add_argument("--dance-bars", default=None, help="START:END bar indices of the x1.5 dance break, e.g. 48:56")
 args = ap.parse_args()
 
 y, sr = librosa.load(args.audio, sr=22050, mono=True)
@@ -127,13 +131,96 @@ def build(hard):
         hyper = hyper_t is not None and t >= hyper_t - 1e-3
         if kind == "q" and s % PER_BAR == 0 and (hyper or (hard and bar % 2 == 0 and e_norm[bar] > 0.7)):
             out.append([round(float(t), 3), (3 - lane) if 3 - lane != lane else (lane + 2) % 4])
-    return out
+    return add_rush(add_holds(out, hard), hard)
 
+
+def add_rush(out, hard):
+    """Build-up before "Go": fast, simple alternating taps on the two middle lanes, then a two-lane
+    chord on the outer lanes exactly when the x2 section starts."""
+    if args.rush_from is None or hyper_t is None:
+        return out
+    r0 = b0 + args.rush_from * 4 * BEAT
+    out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t + 1e-3) and not (len(n) > 2 and n[0] + n[2] > r0)]
+    t, i = r0, 0
+    while t < hyper_t - 1e-3:
+        out.append([round(float(t), 3), 1 + i % 2])
+        fast = hard and t >= r0 + 4 * BEAT - 1e-3   # HARD: sixteenths after the first bar
+        t += STEP / 2 if fast else STEP
+        i += 1
+    out += [[round(float(hyper_t), 3), 0], [round(float(hyper_t), 3), 3]]
+    return sorted(out, key=lambda n: (n[0], n[1]))
+
+
+CALM = 0.3  # bars quieter than this (normalised loudness) get a long note across the bar
+
+
+def add_holds(out, hard):
+    """Long notes: every other bar of calm stretches (intro, verses, bridge), plus the end of each 8-bar phrase.
+
+    A long note is [t, lane, dur]. Other notes in its span move off its lane; on NORMAL they are
+    dropped so the player only has to hold."""
+    bar_of = lambda t: int(np.floor((t - b0) / (4 * BEAT) + 1e-6))
+    holds, prev_lane = [], 3
+    for bar in sorted({bar_of(t) for t, *_ in out}):
+        t0 = b0 + bar * 4 * BEAT
+        if hyper_t is not None and t0 >= hyper_t - 1e-3:
+            continue
+        calm = e_norm[bar] < CALM
+        if calm and (bar % 2 == 1 or e_norm[bar - 1] >= CALM):
+            continue  # calm stretches alternate: one bar held, one bar tapped
+        if calm:
+            start, length = t0, (3.5 if hard else 3.0) * BEAT
+        elif bar % 8 == 7:
+            start, length = t0 + 2 * BEAT, (1.5 if hard else 2.0) * BEAT
+        else:
+            continue
+        here = [n for n in out if abs(n[0] - start) < 1e-3]
+        if not here:
+            continue
+        lane = here[0][1] if here[0][1] != prev_lane else (here[0][1] + 2) % 4
+        holds.append((start, lane, length))
+        prev_lane = lane
+    res = [n for n in out]
+    for start, lane, length in holds:
+        end_t = start + length
+        keep = []
+        for n in res:
+            inside = start - 1e-3 <= n[0] <= end_t + 1e-3
+            if not inside:
+                keep.append(n)
+            elif abs(n[0] - start) < 1e-3:
+                continue                      # replaced by the long note
+            elif hard and n[0] < end_t - 1e-3:
+                keep.append([n[0], n[1] if n[1] != lane else (lane + 1 + int(n[0] * 7) % 3) % 4])
+            elif not hard and n[0] > end_t + BEAT * 0.5 - 1e-3:
+                keep.append(n)
+        keep.append([round(float(start), 3), int(lane), round(float(length), 3)])
+        res = keep
+    res.sort(key=lambda n: (n[0], n[1]))
+    # drop accidental duplicates (same time, same lane)
+    seen, final = set(), []
+    for n in res:
+        key = (n[0], n[1])
+        if key not in seen:
+            seen.add(key); final.append(n)
+    return final
+
+
+# speed zones the game reads: notes scroll mul times faster between t0 and t1
+zones = []
+if args.dance_bars:
+    a_, b_ = (int(x) for x in args.dance_bars.split(":"))
+    zones.append({"t0": round(float(b0 + a_ * 4 * BEAT), 3), "t1": round(float(b0 + b_ * 4 * BEAT), 3), "mul": 1.5, "kind": "dance"})
+if hyper_t is not None:
+    zones.append({"t0": round(float(hyper_t), 3), "t1": round(dur + 5, 3), "mul": 2, "kind": "hyper"})
 
 normal, hard = build(False), build(True)
 for name, c in (("normal", normal), ("hard", hard)):
     ts = sorted({n[0] for n in c})
-    print(f"{name}: {len(c)} notes, {len(c) / (ts[-1] - ts[0]):.2f} nps, {ts[0]:.2f}-{ts[-1]:.2f}s, lanes {np.bincount([n[1] for n in c])}")
+    nh = sum(1 for n in c if len(n) > 2)
+    print(f"{name}: {len(c)} notes ({nh} long), {len(c) / (ts[-1] - ts[0]):.2f} nps, {ts[0]:.2f}-{ts[-1]:.2f}s, lanes {np.bincount([n[1] for n in c])}")
 json.dump({"bpm": args.bpm, "beat": round(BEAT, 6), "b0": round(float(b0), 4), "dur": round(dur, 3),
            "hyper": round(float(hyper_t), 3) if hyper_t is not None else None,
+           "zones": zones,
+           "finish": args.finish,
            "normal": normal, "hard": hard}, open(args.out, "w"), separators=(",", ":"))
