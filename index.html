@@ -90,6 +90,14 @@ body { background: var(--night); color: var(--ink); font-family: var(--body); ov
 .sync-row { display: flex; align-items: center; gap: 10px; }
 .sync-row input { flex: 1; accent-color: var(--neon-cyan); min-width: 0; }
 .sync-row output { font: 700 14px/1 var(--display); font-variant-numeric: tabular-nums; width: 64px; text-align: right; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.opts .ghost { padding: 10px 8px; font-size: 13px; }
+.ghost[aria-pressed="false"] { color: var(--dim); }
+.seg button .rec { font: 700 11px/1.2 var(--display); font-style: normal; letter-spacing: 0.06em; color: var(--yellow); min-height: 1.2em; }
+.rank { font: italic 800 64px/0.9 var(--display); transform: skewX(-8deg); color: var(--yellow); text-shadow: 0 0 16px color-mix(in srgb, var(--yellow) 60%, transparent); }
+.calib-pad { width: 100%; height: 150px; border-radius: 8px; border: 2px solid var(--neon-cyan); background: rgba(39, 243, 255, 0.08);
+  color: var(--ink); font: italic 800 34px/1 var(--display); letter-spacing: 0.1em; cursor: pointer; touch-action: manipulation; }
+.calib-pad.hit { background: rgba(39, 243, 255, 0.3); }
 
 .go {
   font: italic 800 20px/1 var(--display); letter-spacing: 0.08em; color: #12000a;
@@ -219,9 +227,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--neon-cyan);
         <div class="group">
           <span class="label">CLASS</span>
           <div class="seg" id="diffSeg">
-            <button type="button" id="diffEasy" data-diff="easy"><b>EASY</b><small>580 노트</small></button>
-            <button type="button" id="diffNormal" data-diff="normal" class="on"><b>NORMAL</b><small>724 노트</small></button>
-            <button type="button" id="diffHyper" data-diff="hyperdrive"><b>HYPERDRIVE</b><small>1060 노트</small></button>
+            <button type="button" id="diffEasy" data-diff="easy"><b>EASY</b><small>Lv.4 · 580 노트</small><em class="rec"></em></button>
+            <button type="button" id="diffNormal" data-diff="normal" class="on"><b>NORMAL</b><small>Lv.8 · 724 노트</small><em class="rec"></em></button>
+            <button type="button" id="diffHyper" data-diff="hyperdrive"><b>HYPERDRIVE</b><small>Lv.13 · 1060 노트</small><em class="rec"></em></button>
           </div>
         </div>
 
@@ -231,6 +239,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--neon-cyan);
             <input type="range" id="offset" min="-300" max="300" step="5" value="0">
             <output id="offsetOut" for="offset">0 ms</output>
           </div>
+        </div>
+
+        <div class="group">
+          <label class="label" for="speed">NOTE SPEED · 노트가 내려오는 속도</label>
+          <div class="sync-row">
+            <input type="range" id="speed" min="0.6" max="1.8" step="0.1" value="1">
+            <output id="speedOut" for="speed">1.0x</output>
+          </div>
+        </div>
+
+        <div class="opts">
+          <button type="button" class="ghost" id="calibBtn">탭으로 SYNC 맞추기</button>
+          <button type="button" class="ghost" id="hitSeBtn" aria-pressed="true">타격음 켜짐</button>
         </div>
 
         <p class="mobile-only" id="mobileOnly" hidden>모바일 전용 게임이에요. 휴대폰 브라우저로 이 주소를 열어 주세요.</p>
@@ -267,6 +288,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--neon-cyan);
     </div>
   </div>
 
+  <div class="overlay" id="calib" hidden>
+    <section class="panel solo" aria-labelledby="calibTitle">
+      <p class="eyebrow">SYNC CHECK</p>
+      <h2 class="logo" id="calibTitle" style="font-size:44px">TAP THE BEAT</h2>
+      <p class="hint" id="calibMsg">딸깍 소리에 맞춰 아래 패드를 두드리세요. 처음 4번은 연습이고, 그다음 12번으로 맞춥니다.</p>
+      <button type="button" class="calib-pad" id="calibPad">TAP</button>
+      <div class="row">
+        <button type="button" class="go" id="calibApply" disabled>이 값으로 적용</button>
+        <button type="button" class="ghost" id="calibClose">닫기</button>
+      </div>
+    </section>
+  </div>
+
   <div class="overlay" id="pause" hidden>
     <section class="panel solo" aria-labelledby="pauseTitle">
       <p class="eyebrow">BOX, BOX</p>
@@ -284,6 +318,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--neon-cyan);
         <p class="eyebrow" id="rEyebrow">CHEQUERED FLAG</p>
         <div class="pos-line">
           <div class="pos" id="rPos">P1</div>
+          <div class="rank" id="rRank">S</div>
           <div class="badge" id="rBadge">FASTEST LAP</div>
         </div>
         <dl class="stats">
@@ -382,6 +417,8 @@ let diff = store.get("st-diff", "normal");
 if (diff === "hard") diff = "hyperdrive";
 if (!DIFFS.includes(diff)) diff = "normal";
 let offsetMs = store.get("st-offset", 0);
+let speedMul = store.get("st-speed", 1);           // NOTE SPEED: notes take 1/speedMul as long to come down
+let hitSe = store.get("st-hitse", true);           // tap sound on every hit
 
 /* ---------- layout ---------- */
 let W = 0, H = 0, DPR = 1, G = null, bgLayer = null, bgImg = null, MV = null;
@@ -513,6 +550,31 @@ async function loadAudio() {
     audioMode = false; audioState = "none";
   }
   refreshStart();
+}
+// Hit sounds, made on the fly: a short filtered noise "tick" (taps), a rising swish (flicks), a chime (DRS OPEN).
+// They go straight to the speakers (not through the song's fade), at the moment of the touch.
+let noiseBuf = null;
+function hitSound(kind) {
+  if (!hitSe || !AC || AC.state !== "running") return;
+  if (!noiseBuf) {
+    noiseBuf = AC.createBuffer(1, Math.round(AC.sampleRate * 0.25), AC.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const t = AC.currentTime, src = AC.createBufferSource(), f = AC.createBiquadFilter(), gn = AC.createGain();
+  src.buffer = noiseBuf; f.type = "bandpass";
+  if (kind === "flick") {
+    f.frequency.setValueAtTime(1500, t); f.frequency.exponentialRampToValueAtTime(7000, t + 0.12); f.Q.value = 2;
+    gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(0.5, t + 0.03); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  } else {
+    f.frequency.value = 3800; f.Q.value = 1.4;
+    gn.gain.setValueAtTime(0.55, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  }
+  src.connect(f); f.connect(gn); gn.connect(master); src.start(t); src.stop(t + 0.2);
+  if (kind === "drs") [880, 1320, 1760].forEach((fr, i) => {
+    const o = AC.createOscillator(), g2 = AC.createGain(); o.type = "triangle"; o.frequency.value = fr;
+    g2.gain.setValueAtTime(0.0001, t + i * 0.07); g2.gain.exponentialRampToValueAtTime(0.18, t + i * 0.07 + 0.01);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + i * 0.07 + 0.35); o.connect(g2); g2.connect(master); o.start(t + i * 0.07); o.stop(t + i * 0.07 + 0.4);
+  });
 }
 function beep(t, freq, dur) {
   const o = AC.createOscillator(), gn = AC.createGain(); o.type = "square"; o.frequency.value = freq;
@@ -652,7 +714,7 @@ function songNow() {
 
 function startRace() {
   if (!playerReady) return;
-  C = 3 / SPEED[diff];
+  C = 3 / (SPEED[diff] / speedMul);
   notes = CHART[diff].map(([t, lane, d, k]) => ({ t, lane, d: d || 0, k: k || "", done: false, head: null }));
   totalObjects = notes.reduce((a, n) => a + (n.d ? 2 : 1), 0);
   // DRS zones: every note inside glows; all hit (no miss, no broken long note) opens DRS
@@ -753,6 +815,7 @@ function applyJudge(note, kind, dt, tail) {
   if (stats.life <= 0 && state === "play") retire();
   lastJudge = { kind, at: performance.now() / 1000, dt, tail };
   if (kind !== "miss") burst(note.lane, j.color, kind === "purple" ? 14 : 8, true);
+  if (kind !== "miss" && !tail && note.k !== "f" && !note.soundless) hitSound("tap");
 }
 function scoreNow() {
   return Math.round((stats.pts / (totalObjects * 100)) * (1e6 - DRS_SHARE) + (drs.length ? stats.drsOpen / drs.length : 0) * DRS_SHARE);
@@ -762,7 +825,7 @@ function openDrs(z) {
   stats.life = Math.min(100, stats.life + DRS_HEAL);
   banner = { text: "DRS OPEN", sub: `LIFE +${DRS_HEAL} · BONUS +${fmtScore(Math.round(DRS_SHARE / drs.length))}`, color: GOLD, at: performance.now() / 1000, dur: 1.6 };
   for (let l = 0; l < 4; l++) burst(l, GOLD, 10, true);
-  buzz([20, 40, 30]);
+  buzz([20, 40, 30]); hitSound("drs");
 }
 function buzz(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch {} }
 // LIFE ran out: the car retires. The music fades, then the result screen shows DNF.
@@ -818,6 +881,7 @@ function press(lane, at, pointer) {
   }
   // a 4-lane long note: one thumb on either lane of its pair takes both lanes of that pair
   const group = best.k === "w" ? notes.filter(n => n.k === "w" && Math.abs(n.t - best.t) < 1e-3 && (n.lane >> 1) === (lane >> 1) && !n.head && !n.done) : [best];
+  group.forEach((n, i) => { if (i) n.soundless = true; });   // one tick for the whole 4-lane note
   for (const n of group) {
     applyJudge(n, kind, now - n.t);
     if (n.d) { n.head = kind; activeHolds.push(n); } else n.done = true;
@@ -835,7 +899,7 @@ function endFlick(id, flicked) {
   applyJudge(n, kind, f.dt);
   stats.dtSum += f.dt; stats.dtN++;
   if (flicked) {
-    stats.flicks++; buzz(12);
+    stats.flicks++; buzz(12); hitSound("flick");
     const [x, y] = P(-0.75 + n.lane * 0.5, 1);
     for (let i = 0; i < 14; i++) sparks.push({ x, y, vx: (Math.random() - 0.5) * 160, vy: -380 - Math.random() * 420, life: 0.55, c: PINK });
     if (!banner || performance.now() / 1000 - banner.at > 0.3) banner = { text: "FLICK!", sub: "", color: PINK, at: performance.now() / 1000, dur: 0.6, small: true };
@@ -875,9 +939,16 @@ function finish(dnf) {
   const fc = stats.counts.miss === 0 && stats.judged > 0;
   lastRun = { diff, score: stats.score, acc: Math.round(acc * 10000) / 100, combo: stats.maxCombo, fc, submitted: !!dnf, dnf: !!dnf };
   $("rPos").textContent = dnf ? "DNF" : "P" + pos;
+  const ap = fc && stats.counts.green === 0 && stats.counts.yellow === 0, rank = rankOf(stats.score);
+  $("rRank").textContent = dnf ? "" : rank; $("rRank").hidden = dnf;
   const badge = $("rBadge");
   badge.hidden = dnf || !(fc || pos <= 3);
-  badge.textContent = fc ? "FASTEST LAP" : "PODIUM";
+  badge.textContent = ap ? "ALL PURPLE" : fc ? "FULL COMBO" : "PODIUM";
+  if (!dnf) {                                        // best rank / FC / AP on this device, shown on the class buttons
+    const rk = `st-rec-${diff}`, old = store.get(rk, null), order = RANKS.map(r => r[1]);
+    const better = !old || order.indexOf(rank) < order.indexOf(old.rank);
+    store.set(rk, { rank: better ? rank : old.rank, fc: fc || !!(old && old.fc), ap: ap || !!(old && old.ap) });
+  }
   badge.style.background = fc ? "var(--purple)" : "var(--yellow)";
   badge.style.boxShadow = fc ? "0 0 16px var(--purple)" : "0 0 16px var(--yellow)";
   $("rEyebrow").textContent = dnf ? `RETIRED · LIFE 0 · ${fmtLap(Math.max(0, retireSong))} 지점 · ${diff.toUpperCase()}`
@@ -918,6 +989,8 @@ $("syncFixBtn").addEventListener("click", () => {
   $("syncFixBtn").disabled = true; $("syncFixBtn").textContent = "적용됨";
 });
 const bestKey = () => `st-best-${diff}`;
+const RANKS = [[990000, "S+"], [950000, "S"], [900000, "A"], [800000, "B"], [700000, "C"], [0, "D"]];
+const rankOf = score => RANKS.find(([min]) => score >= min)[1];
 
 /* ---------- online leaderboard (Vercel API + Redis, timing tower) ---------- */
 // Each browser gets a random player id and a secret; the server keeps only the secret's hash,
@@ -1666,7 +1739,13 @@ window.addEventListener("resize", resize);
 
 /* ---------- menu wiring ---------- */
 function refreshMenu() {
-  document.querySelectorAll("#diffSeg button").forEach(b => b.classList.toggle("on", b.dataset.diff === diff));
+  document.querySelectorAll("#diffSeg button").forEach(b => {
+    b.classList.toggle("on", b.dataset.diff === diff);
+    const r = store.get(`st-rec-${b.dataset.diff}`, null);
+    b.querySelector(".rec").textContent = r ? `BEST ${r.rank}${r.ap ? " · AP" : r.fc ? " · FC" : ""}` : "";
+  });
+  $("speed").value = speedMul; $("speedOut").value = speedMul.toFixed(1) + "x";
+  $("hitSeBtn").setAttribute("aria-pressed", String(hitSe)); $("hitSeBtn").textContent = hitSe ? "타격음 켜짐" : "타격음 꺼짐";
   ui.offset.value = offsetMs; ui.offsetOut.value = (offsetMs > 0 ? "+" : "") + offsetMs + " ms";
   const best = store.get(bestKey(), 0);
   ui.bestLine.textContent = best ? `이 기기 최고 · ${diff.toUpperCase()} · ${fmtScore(best)}` : "";
@@ -1676,6 +1755,58 @@ $("diffSeg").addEventListener("click", e => {
   diff = b.dataset.diff; store.set("st-diff", diff); refreshMenu(); setTowerDiff(diff);
 });
 ui.offset.addEventListener("input", () => { offsetMs = +ui.offset.value; store.set("st-offset", offsetMs); refreshMenu(); });
+$("speed").addEventListener("input", () => { speedMul = Math.round(+$("speed").value * 10) / 10; store.set("st-speed", speedMul); refreshMenu(); });
+$("hitSeBtn").addEventListener("click", () => {
+  hitSe = !hitSe; store.set("st-hitse", hitSe); refreshMenu();
+  if (hitSe && AC) { AC.resume(); setTimeout(() => hitSound("tap"), 30); }
+});
+// Tap calibration: clicks every 0.5 s; each tap is compared with the click the listener heard (output timestamp).
+// The median difference becomes SYNC, the same correction the result screen offers.
+const calib = { clicks: [], taps: [], value: null };
+function heardCtx(perfMs) {
+  if (AC.getOutputTimestamp) {
+    const ts = AC.getOutputTimestamp();
+    if (ts.contextTime > 0 && ts.performanceTime > 0) return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
+  }
+  return AC.currentTime - (AC.outputLatency || AC.baseLatency || 0) + (perfMs - performance.now()) / 1000;
+}
+$("calibBtn").addEventListener("click", async () => {
+  if (!AC) return;
+  try { await AC.resume(); } catch {}
+  calib.clicks = []; calib.taps = []; calib.value = null;
+  $("calibApply").disabled = true; $("calib").hidden = false; ui.menu.hidden = true;
+  $("calibMsg").textContent = "딸깍 소리에 맞춰 아래 패드를 두드리세요. 처음 4번은 연습이고, 그다음 12번으로 맞춥니다.";
+  const t0 = AC.currentTime + 0.8;
+  for (let i = 0; i < 16; i++) {
+    const t = t0 + i * 0.5; calib.clicks.push(t);
+    const o = AC.createOscillator(), gn = AC.createGain(); o.frequency.value = i % 4 ? 1000 : 1500;
+    gn.gain.setValueAtTime(0.3, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    o.connect(gn); gn.connect(master); o.start(t); o.stop(t + 0.06);
+  }
+  setTimeout(finishCalib, (0.8 + 16 * 0.5 + 0.6) * 1000);
+});
+$("calibPad").addEventListener("pointerdown", e => {
+  e.preventDefault();
+  if (!calib.clicks.length) return;
+  const h = heardCtx(e.timeStamp), near = calib.clicks.reduce((a, c) => Math.abs(c - h) < Math.abs(a - h) ? c : a);
+  if (calib.clicks.indexOf(near) >= 4 && Math.abs(h - near) < 0.25) calib.taps.push(h - near);
+  const pad = $("calibPad"); pad.classList.add("hit"); setTimeout(() => pad.classList.remove("hit"), 90);
+});
+function finishCalib() {
+  if ($("calib").hidden) return;
+  const d = calib.taps.slice().sort((a, b) => a - b);
+  if (d.length < 6) { $("calibMsg").textContent = "탭이 너무 적어요. 닫고 다시 해 주세요."; return; }
+  const med = d[d.length >> 1];
+  calib.value = Math.max(-300, Math.min(300, Math.round(med * 1000 / 5) * 5));
+  $("calibMsg").textContent = `평균 ${Math.abs(calib.value)}ms ${calib.value > 0 ? "늦게" : calib.value < 0 ? "빠르게" : ""} 눌렀어요. SYNC를 ${calib.value > 0 ? "+" : ""}${calib.value}ms로 맞출까요?`;
+  $("calibApply").disabled = false;
+}
+$("calibApply").addEventListener("click", () => {
+  if (calib.value == null) return;
+  offsetMs = calib.value; store.set("st-offset", offsetMs);
+  $("calib").hidden = true; ui.menu.hidden = false; refreshMenu();
+});
+$("calibClose").addEventListener("click", () => { calib.clicks = []; $("calib").hidden = true; ui.menu.hidden = false; });
 ui.startBtn.addEventListener("click", startRace);
 $("retryBtn").addEventListener("click", startRace);
 $("menuBtn").addEventListener("click", toMenu);
