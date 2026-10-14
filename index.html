@@ -357,7 +357,7 @@ const TOUCH = window.matchMedia("(pointer: coarse)").matches || navigator.maxTou
 const LIFE = { easy: { miss: 5, heal: 0.8 }, normal: { miss: 7, heal: 0.6 }, hyperdrive: { miss: 9, heal: 0.5 } };
 const DRS_HEAL = 30, DRS_SHARE = 50000;                 // score: 950,000 for judgements + 50,000 shared by DRS zones
 const GOLD = "#ffcf3a", FLICK_PX = 18, FLICK_WAIT = 0.35;
-const GANTRY_TEXT = ["STAR TRACE", "PLAVE", "HYPERDRIVE", "ASTERUM"];
+const GANTRY_TEXT = ["STAR TRACE", "HYPERDRIVE", "NIGHT RACE", "ASTERUM"];
 const FONT = '"Saira Condensed", "IBM Plex Sans KR", "Arial Narrow", sans-serif';
 const BEAT = CHART.beat;
 const lapOf = score => 86.4 + (1 - score / 1e6) * 30;
@@ -525,10 +525,10 @@ function stopSong() {
   setTimeout(() => { try { oldSrc && oldSrc.stop(); } catch {} old.disconnect(); }, 400);
   S = null; src = null;
 }
-// The MV in file mode: very quiet, or muted where the volume can't be set.
-function quietMV() {
-  if (MV_VOLUME > 0 && !IOS) { player.unMute(); player.setVolume(MV_VOLUME); } else player.mute();
-}
+// The MV in file mode starts muted (browsers always allow that), so the picture is sure to play.
+// Once it is playing, it is turned up to MV_VOLUME; if the browser stops it for that, it goes back to muted.
+let mvLoud = false;
+function quietMV() { player.mute(); mvLoud = false; }
 // Normal volume again when leaving the race (the player is paused then), so later YouTube plays aren't left quiet.
 function restoreMV() {
   if (MV_VOLUME > 0 && !IOS) player.setVolume(100);
@@ -540,15 +540,19 @@ function syncVideo() {
   if (!audioMode || state !== "play" || !player) return;
   const target = audioNow();                             // song position the player hears
   if (target < -0.4) return;
-  if (playerState !== YT.PlayerState.PLAYING && playerState !== YT.PlayerState.BUFFERING) {
-    const nowMs = performance.now();
+  const nowMs = performance.now();
+  if (playerState !== YT.PlayerState.PLAYING) {
+    if (mvLoud) { player.mute(); mvLoud = "blocked"; }   // stopped after turning it up: stay muted from now on
     if (!playAsked) playAsked = nowMs;
-    else if (nowMs - playAsked > 1500 && !player.isMuted()) player.mute();   // the browser won't play it with sound: muted instead
-    player.playVideo(); return;
+    if (playerState !== YT.PlayerState.BUFFERING || nowMs - playAsked > 2500) { player.playVideo(); if (nowMs - playAsked > 2500) playAsked = nowMs; }
+    return;
   }
   playAsked = 0;
+  if (MV_VOLUME > 0 && !IOS && mvLoud === false && clock.running && clock.samples.length >= 30) {
+    player.unMute(); player.setVolume(MV_VOLUME); mvLoud = true;
+  }
   if (!clock.running || clock.samples.length < 8) return;
-  const drift = mvNow() - target, nowMs = performance.now();
+  const drift = mvNow() - target;
   if (Math.abs(drift) > 0.07 && nowMs - lastSeek > 1500) {
     if (nowMs - lastSeek < 6000) seekLead = Math.max(0, Math.min(0.6, seekLead - drift));
     lastSeek = nowMs; player.seekTo(Math.max(0, target + seekLead), true);
@@ -589,7 +593,8 @@ window.onYouTubeIframeAPIReady = () => {
           if (state === "paused" && !audioMode) resumeGame(true);
         } else {
           anchorClock(false);
-          if (e.data === YT.PlayerState.PAUSED && state === "play" && performance.now() - lastSeek > 800) pauseGame(true);
+          // file mode runs on the audio clock: a stalled MV is just restarted by syncVideo, the race goes on
+          if (e.data === YT.PlayerState.PAUSED && state === "play" && !audioMode && performance.now() - lastSeek > 800) pauseGame(true);
           if (e.data === YT.PlayerState.ENDED && state === "play" && !audioMode) finish();
         }
       },
