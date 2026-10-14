@@ -5,7 +5,8 @@ usage: python build_chart.py <audio> <out.json> [--start SEC] [--end SEC] [--hyp
 MV:    --end 205 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.4:141.1 --finish 206
 album: --end 176 --hyper-bar 104 --rush-from 100 --go-early 1 --dance-bars 48:56 --vocal-range 120.48:141.18 --vocal-shift 0.077
        (both: --drums <drum track> --drum-bars 29:32,48:56,69:72,149:150; the drum track is separated with an MDX-Net drum model)
-       touch specials and DRS zones (MV): --sweep-bars 39,47,55,71,127 --flick-bars 40,48,72,128 --drs-bars 40:44,72:76,108:112,132:136,144:148
+       touch specials, lyric patterns and DRS zones (MV): --vocal-stem <vocal track> --sweep-bars 47,55
+       --flick-bars 32,48,72,112,134 --drs-bars 40:45,80:85,108:112,120:125,142:147
 (3:26 is when the car crosses the line in the MV; sung long notes run 2:00.5-2:21: "woah", then "This is the time of our lives")
 
 Star Trace sits at 175 BPM (beat 0.342857 s). Onset autocorrelation peaks at the
@@ -35,6 +36,7 @@ ap.add_argument("--drums", default=None, help="drum track separated from the sam
 ap.add_argument("--sweep-bars", default="", help="bars whose last beat is a SWEEP: four notes across the lanes in one slide, e.g. 39,47,55,71,127")
 ap.add_argument("--flick-bars", default="", help="bars whose downbeat is a FLICK note (touch and swipe up), e.g. 40,48,72,128; the Go chord is always one")
 ap.add_argument("--drs-bars", default="", help="START:END bar ranges of DRS zones (glowing notes; clear them all for a bonus), e.g. 40:44,72:76")
+ap.add_argument("--vocal-stem", default=None, help="vocal track separated from the same audio (same timing), for the lyric patterns")
 ap.add_argument("--drum-bars", default="", help="bar ranges whose notes follow the drum hits, e.g. 29:32,48:56,69:72,149:150 "
                 "(the --rush-from bars before Go always do when --drums is given)")
 args = ap.parse_args()
@@ -150,7 +152,7 @@ def build(lv):
         double = (hyper and (lv > EASY or bar % 2 == 0)) or (lv == HYPER and bar % 2 == 0 and e_norm[bar] > 0.7)
         if kind == "q" and s % PER_BAR == 0 and double:
             out.append([round(float(t), 3), (3 - lane) if 3 - lane != lane else (lane + 2) % 4])
-    return add_specials(hand_split(add_rush(add_vocal(add_drum_bars(add_holds(out, lv), lv), lv), lv)), lv)
+    return add_lyrics(add_specials(hand_split(add_rush(add_vocal(add_drum_bars(add_holds(out, lv), lv), lv), lv)), lv), lv)
 
 
 # Sung syllables in MV time (s): (start, end, midi). end None = short syllable -> tap.
@@ -163,8 +165,9 @@ SYLLABLES = [
     # woah (2:06.0)
     (125.99, 127.38, 67), (127.42, 128.38, 66), (128.42, None, 67), (128.74, 129.50, 64),
     # This / is / the / time / of / our / lives (2:10.9)
-    (130.90, 131.55, 67), (131.67, 132.80, 69), (132.88, None, 69), (133.14, 134.04, 71),
-    (134.20, 135.46, 73), (135.82, 136.38, 71), (136.45, 141.55, 71),
+    # every syllable is a long note; "lives~" is a 4-lane long note (each thumb holds its two lanes)
+    (130.90, 131.55, 67), (131.67, 132.80, 69), (132.88, 133.08, 69), (133.14, 134.04, 71),
+    (134.20, 135.46, 73), (135.82, 136.30, 71), (136.45, 141.55, 71, "wide"),
 ]
 
 
@@ -180,17 +183,21 @@ def add_vocal(out, lv):
     sh = args.vocal_shift
     out = [n for n in out if not (v0 <= n[0] < v1) and not (len(n) > 2 and n[0] < v1 and n[0] + n[2] > v0)]
     phrases, last = [], -9.0                          # a break of over 0.5 s starts a new phrase
-    for st, en, midi in SYLLABLES:
+    for st, en, midi, *wide in SYLLABLES:
         if st - last > 0.5:
             phrases.append([])
-        phrases[-1].append((st, en, midi))
+        phrases[-1].append((st, en, midi, bool(wide)))
         last = en if en is not None else st
     sung, prev_t = [], -9.0
-    for st, en, midi, hand, med in ((st, en, m, j % 2, np.median([x[2] for x in ph]))
-                                    for ph in phrases for j, (st, en, m) in enumerate(ph)):
+    for st, en, midi, wide, hand, med in ((st, en, m, w, j % 2, np.median([x[2] for x in ph]))
+                                          for ph in phrases for j, (st, en, m, w) in enumerate(ph)):
         st += sh
         en = en + sh if en is not None else None
         if not (v0 <= st < v1):
+            continue
+        if wide:                                      # all four lanes: both thumbs hold
+            sung += [(st, en, 0), (st, en, 2)]
+            out += [[round(st, 3), l, round(en - st, 3), "w"] for l in range(4)]
             continue
         lane = hand * 2 + (1 if midi >= med else 0)
         sung.append((st, en if en is not None else st, lane))
@@ -234,8 +241,12 @@ def hand_split(out):
     used_at = [None, None]   # time of the thumb's latest note (to keep chords one per thumb)
     res = []
     # long notes first at equal times, so a chord's tap is placed around the hold
-    for n in sorted(out, key=lambda n: (n[0], 0 if len(n) > 2 else 1, n[1])):
+    for n in sorted(out, key=lambda n: (n[0], 0 if len(n) > 3 else 1 if len(n) > 2 else 2, n[1])):
         t = n[0]
+        if len(n) > 3:                                 # special notes are placed as written
+            res.append(n); h = n[1] // 2
+            free_at[h] = max(free_at[h], t + (n[2] + 0.12 if n[2] else THUMB_GAP)); used_at[h] = t
+            continue
         ok = lambda h: t >= free_at[h] - 1e-6 and used_at[h] != t
         h = hand(n[1])
         lane = n[1]
@@ -353,15 +364,18 @@ def add_rush(out, lv):
     r0 = b0 + args.rush_from * 4 * BEAT
     # clear the rush window (up to, not including, the drop downbeat)
     out = [n for n in out if not (r0 - 1e-3 <= n[0] < hyper_t - 1e-3)]
-    busy = None
+    busy, r_from = None, r0
     for n in out:
+        if n[3:] == ["w"] and n[0] < r0 < n[0] + n[2] + 0.12:
+            r_from = max(r_from, n[0] + n[2] + THUMB_GAP)   # both thumbs hold "lives~": the hits come after it
+            continue
         if len(n) > 2 and n[0] < r0 < n[0] + n[2] + 0.12:
             if lv == HYPER and args.drums:
                 n[2] = round(max(STEP, r0 - THUMB_GAP - n[0]), 3)
             else:
                 busy = (n[1] // 2, n[0] + n[2] + 0.12)
     if args.drums:
-        out += drum_notes(lv, r0, go_t - THUMB_GAP + 1e-3, busy)
+        out += drum_notes(lv, r_from, go_t - THUMB_GAP + 1e-3, busy)
     else:                                              # no drum track: plain alternating eighths
         out += [[round(float(t), 3), 1 + i % 2] for i, t in enumerate(np.arange(r0, go_t - THUMB_GAP, STEP))]
     out += [[round(float(go_t), 3), 0], [round(float(go_t), 3), 3]]
@@ -471,8 +485,101 @@ def add_specials(out, lv):
         here = [n for n in out if abs(n[0] - t) < 1e-3 and len(n) == 2]
         for n in here:
             n += [0, "f"]
+        if not here and not any(abs(n[0] - t) < 1e-3 for n in out):   # nothing on that beat: add one
+            covered = lambda h: any(len(n) > 2 and n[2] > 0 and n[1] // 2 == h and n[0] < t < n[0] + n[2] + 0.12 for n in out)
+            h = 0 if not covered(0) else 1 if not covered(1) else None
+            if h is not None:
+                out = [n for n in out if not (n[1] // 2 == h and abs(n[0] - t) < THUMB_GAP and len(n) < 4)]
+                out.append([t, 1 if h == 0 else 2, 0, "f"])
     return sorted(out, key=lambda n: (n[0], n[1]))
 
+
+# ---------- lyric patterns (cue windows from the MV's official subtitles; note times from the separated vocal)
+STARFALL = [(47.416, 49.166), (58.541, 60.125), (102.375, 104.166), (113.333, 115.0),
+            (157.208, 158.958), (168.125, 169.916), (187.375, 189.041), (198.375, 200.041)]   # "When a star falls on you"
+FOR_YOU = [(49.166, 50.458), (60.125, 61.541), (104.166, 105.416), (115.0, 116.25),
+           (158.958, 160.416), (169.916, 171.25), (189.041, 190.333), (200.041, 201.583)]      # "너를 위해서"
+_voc = None
+
+
+def vocal_rises(a, b, min_db):
+    """Syllable starts in [a, b) on the separated vocal: (time, dB jump), time = middle of the loudness rise."""
+    global _voc
+    if _voc is None:
+        yv, _ = librosa.load(args.vocal_stem, sr=sr, mono=True)
+        Sv = np.abs(librosa.stft(yv, n_fft=1024, hop_length=64))
+        fv = librosa.fft_frequencies(sr=sr, n_fft=1024)
+        e = np.convolve(np.sqrt((Sv[(fv > 120) & (fv < 6000)] ** 2).sum(0)), np.ones(5) / 5, "same")
+        db = 20 * np.log10(e + 1e-6); db -= np.percentile(db, 99.5)
+        L = librosa.power_to_db(librosa.feature.melspectrogram(S=Sv ** 2, sr=sr, n_mels=64, fmin=120, fmax=6000))
+        flux = np.convolve(np.maximum(0, np.diff(L, axis=1, prepend=L[:, :1])).mean(0), np.ones(3) / 3, "same")
+        _voc = (np.arange(len(e)) * 64 / sr, db, flux)
+    tv, db, flux = _voc
+    idx = np.where((tv >= a) & (tv < b))[0]
+    if not len(idx):
+        return []
+    import scipy.signal as ss
+    res = []
+    for p in idx[ss.find_peaks(flux[idx], distance=int(0.08 * sr / 64))[0]]:
+        q = max(0, p - int(0.08 * sr / 64)); q += int(np.argmin(db[q:p + 1]))
+        jump = db[p:p + int(0.06 * sr / 64)].max() - db[q]
+        if jump >= min_db:
+            res.append((round(float((tv[q] + tv[p]) / 2), 3), float(jump)))
+    return res
+
+
+def add_lyrics(out, lv):
+    """"When a star falls on you": its four strong syllables fall across the lanes as a SWEEP (3-2-1-0, then
+    0-1-2-3 the next time). "너를 위해서": a two-thumb FLICK on 너 and a long note from 위 to the end of the line.
+    Other notes move out of the way (the sweep clears both thumbs, the long note its own thumb)."""
+    if not args.vocal_stem:
+        return out
+    sh = args.vocal_shift
+    specials, clear_all, clear_thumb = [], [], []
+    for i, (a, b) in enumerate(STARFALL):
+        a, b = a + sh, b + sh
+        if b > end:
+            continue
+        nxt = vocal_rises(b - 0.25, b + 0.3, 12)       # "너" of the next line can start a little before its cue
+        stop = min(b - 0.1, nxt[0][0] - 0.1) if nxt else b - 0.1
+        top = sorted(sorted(vocal_rises(a - 0.12, stop, 10), key=lambda r: -r[1])[:4])
+        if len(top) < 4:
+            continue
+        lanes = (3, 2, 1, 0) if i % 2 == 0 else (0, 1, 2, 3)
+        specials += [[t, l, 0, "s"] for (t, _), l in zip(top, lanes)]
+        clear_all.append((top[0][0] - THUMB_GAP, top[-1][0] + THUMB_GAP))
+    for i, (a, b) in enumerate(FOR_YOU):
+        a, b = a + sh, b + sh
+        if b > end:
+            continue
+        rises = vocal_rises(a - 0.12, b - 0.1, 12)
+        if not rises:
+            continue
+        t1 = rises[0][0]
+        specials += [[t1, 1, 0, "f"], [t1, 2, 0, "f"]]
+        clear_all.append((t1 - THUMB_GAP, t1 + 0.3))     # time to finish the flick
+        later = [t for t, _ in vocal_rises(t1 + 0.3, b - 0.3, 8)]
+        if later:
+            t2, lane = later[0], (0 if i % 2 == 0 else 3)
+            dur = round(b - 0.12 - t2, 3)
+            specials.append([t2, lane, dur, "h"])
+            clear_thumb.append((t2 - THUMB_GAP, t2 + dur + 0.12, lane // 2))
+    def blocked(n):
+        if len(n) > 3:
+            return False
+        n_end = n[0] + (n[2] if len(n) > 2 else 0)
+        if any(n[0] < b_ and n_end > a_ for a_, b_ in clear_all):
+            return True
+        return any(n[1] // 2 == h and n[0] < b_ and n_end > a_ for a_, b_, h in clear_thumb)
+    out = [n for n in out if not blocked(n)] + [[round(n[0], 3)] + n[1:] for n in specials]
+    return sorted(out, key=lambda n: (n[0], n[1]))
+
+
+SECTIONS = [(8, "STARLIGHT SIGNAL", "VERSE 1"), (24, "RPM RISING", "PRE-CHORUS"), (32, "STAR TRACE", "CHORUS 1"),
+            (56, "LIGHTSPEED PULSE", "VERSE 2"), (64, "REDLINE SHIFT", "PRE-CHORUS 2"), (72, "STAR TRACE II", "CHORUS 2"),
+            (88, "ZERO GRAVITY", "BRIDGE"), (112, "HYPERDRIVE CLIMAX", "CHORUS 3"), (128, "SLIPSTREAM", "FINAL LAP"),
+            (134, "FINAL OVERDRIVE", "ENCORE")]   # section names shown as a banner (bar index, name, label)
+sections = [{"t": round(float(bar_t(b)), 3), "name": nm, "sub": sb} for b, nm, sb in SECTIONS if bar_t(b) < end]
 
 drs = []
 for rng in [r for r in args.drs_bars.split(",") if r.strip()]:
@@ -490,5 +597,6 @@ json.dump({"bpm": args.bpm, "beat": round(BEAT, 6), "b0": round(float(b0), 4), "
            "hyper": round(float(go_t), 3) if go_t is not None else None,
            "zones": zones,
            "drs": drs,
+           "sections": sections,
            "finish": args.finish,
            **charts}, open(args.out, "w"), separators=(",", ":"))
