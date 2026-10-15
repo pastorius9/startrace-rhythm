@@ -165,7 +165,7 @@ SYLLABLES = [
     # woah (2:06.0)
     (125.99, 127.38, 67), (127.42, 128.38, 66), (128.42, None, 67), (128.74, 129.50, 64),
     # This / is / the / time / of / our / lives (2:10.9)
-    # every syllable is a long note; "lives~" is a 4-lane long note (each thumb holds its two lanes)
+    # every syllable is a long note; "lives~" is a long note on both middle lanes at once (one per thumb)
     (130.90, 131.55, 67), (131.67, 132.80, 69), (132.88, 133.08, 69), (133.14, 134.04, 71),
     (134.20, 135.46, 73), (135.82, 136.30, 71), (136.45, 141.55, 71, "wide"),
 ]
@@ -195,9 +195,9 @@ def add_vocal(out, lv):
         en = en + sh if en is not None else None
         if not (v0 <= st < v1):
             continue
-        if wide:                                      # all four lanes: both thumbs hold
-            sung += [(st, en, 0), (st, en, 2)]
-            out += [[round(st, 3), l, round(en - st, 3), "w"] for l in range(4)]
+        if wide:                                      # both middle lanes: both thumbs hold
+            sung += [(st, en, 1), (st, en, 2)]
+            out += [[round(st, 3), l, round(en - st, 3), "w"] for l in (1, 2)]
             continue
         lane = hand * 2 + (1 if midi >= med else 0)
         sung.append((st, en if en is not None else st, lane))
