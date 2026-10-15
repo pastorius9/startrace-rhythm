@@ -361,7 +361,7 @@ const MV_ID = "TBmE7m0yEwY"; // PLAVE 'Star Trace' M/V
 // The game plays this file (the MV's own audio) on the Web Audio clock, so notes and sound share one clock.
 // The MV plays along as picture (at MV_VOLUME, not muted) and is nudged back whenever it drifts.
 // Without the file, the MV's sound is used.
-const AUDIO_SRC = "startrace.mp3";
+const AUDIO_SRC = "startrace.bin";   // the song, encrypted (AES-CTR) so the file itself won't play if downloaded
 // MV volume while the game plays the file (1-100; 0 = muted). Very low so its sound doesn't double the music.
 // iPhone/iPad ignore the volume setting (the MV would play at full volume), so there it stays muted.
 const MV_VOLUME = 1;
@@ -537,13 +537,22 @@ function buildBg() {
 /* ---------- game audio (file mode) ---------- */
 let AC = null, master = null, songBuf = null, S = null, src = null, startAt = 0, lat = 0;
 let audioMode = false, audioState = "loading";      // loading | ready | none
+// The song file is stored encrypted; it is decrypted in memory and handed straight to the decoder.
+// This stops casual downloading (saving the file gives noise); it is not DRM.
+async function unlockSong(buf) {
+  const a = Uint8Array.from(atob("bm3oc3Izql2iZKtEMN5W9XH/xxROjQCSqyn/Zb39FlN+W136zAm0W3jVZ7pvVQBi"), c => c.charCodeAt(0));
+  const b = Uint8Array.from(atob("QoNOj/DmKGwGPHQdXZqG0iYcgNoQFLzQXYgpIlh1zQywzDVejRkkq4VJDan0VeLo"), c => c.charCodeAt(0));
+  const kv = a.map((x, i) => x ^ b[i]);
+  const key = await crypto.subtle.importKey("raw", kv.slice(0, 32), "AES-CTR", false, ["decrypt"]);
+  return crypto.subtle.decrypt({ name: "AES-CTR", counter: kv.slice(32, 48), length: 128 }, key, buf);
+}
 async function loadAudio() {
   try {
     AC = new (window.AudioContext || window.webkitAudioContext)();
     master = AC.createGain(); master.connect(AC.destination);
     const res = await fetch(AUDIO_SRC);
     if (!res.ok) throw new Error(res.status);
-    const data = await res.arrayBuffer();
+    const data = await unlockSong(await res.arrayBuffer());
     songBuf = await new Promise((ok, bad) => AC.decodeAudioData(data, ok, bad));
     audioMode = true; audioState = "ready";
   } catch {
