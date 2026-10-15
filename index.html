@@ -260,7 +260,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--neon-cyan);
           <li><b>FLICK</b> 화살표 노트는 터치하고 위로 튕기기.</li>
           <li><b>가운데 2레인 롱노트</b> 빛나는 막대로 이어진 가운데 두 롱노트는 두 엄지로 함께 누른 채로.</li>
           <li><b>LIFE</b> 놓칠 때마다 줄고, 0이 되면 리타이어.</li>
-          <li><b>HYPERDRIVE</b> NORMAL을 전부 PURPLE(올 퍼플)로 완주하면 열려요.</li>
+          <li><b>HYPERDRIVE</b> NORMAL을 하나도 놓치지 않고(풀콤보) 완주하면 열려요.</li>
           <li><b>DRS ZONE</b> 금색으로 빛나는 구간을 하나도 놓치지 않으면 LIFE 회복과 보너스 점수.</li>
         </ul>
         <div class="judge-key" aria-label="판정 등급">
@@ -414,9 +414,9 @@ const store = {
 let diff = store.get("st-diff", "normal");
 if (diff === "hard") diff = "hyperdrive";
 if (!DIFFS.includes(diff)) diff = "normal";
-// HYPERDRIVE opens once NORMAL has been cleared ALL PURPLE on this device (?unlock in the address opens it for testing)
+// HYPERDRIVE opens once NORMAL has been cleared with a FULL COMBO on this device (?unlock in the address opens it for testing)
 if (/[?&]unlock\b/.test(location.search)) store.set("st-unlock-hyper", true);
-const hyperOpen = () => store.get("st-unlock-hyper", false) || !!(store.get("st-rec-normal", null) || {}).ap;
+const hyperOpen = () => store.get("st-unlock-hyper", false) || !!(store.get("st-rec-normal", null) || {}).fc;
 if (diff === "hyperdrive" && !hyperOpen()) diff = "normal";
 let offsetMs = store.get("st-offset", 0);
 let speedMul = store.get("st-speed", 1);           // NOTE SPEED: notes take 1/speedMul as long to come down
@@ -1720,7 +1720,7 @@ function refreshMenu() {
     b.classList.toggle("on", b.dataset.diff === diff);
     const r = store.get(`st-rec-${b.dataset.diff}`, null), locked = b.dataset.diff === "hyperdrive" && !hyperOpen();
     b.classList.toggle("locked", locked); b.setAttribute("aria-disabled", String(locked));
-    b.querySelector(".rec").textContent = locked ? "NORMAL 올 퍼플로 해금" : r ? `BEST ${r.rank}${r.ap ? " · AP" : r.fc ? " · FC" : ""}` : "";
+    b.querySelector(".rec").textContent = locked ? "NORMAL 풀콤보로 해금" : r ? `BEST ${r.rank}${r.ap ? " · AP" : r.fc ? " · FC" : ""}` : "";
   });
   $("speed").value = speedMul; $("speedOut").value = speedMul.toFixed(1) + "x";
   ui.offset.value = offsetMs; ui.offsetOut.value = (offsetMs > 0 ? "+" : "") + offsetMs + " ms";
