@@ -36,7 +36,7 @@ html, body { height: 100%; }
 body { background: var(--night); color: var(--ink); font-family: var(--body); overflow: hidden; }
 
 #stage {
-  position: fixed; left: 0; right: 0; margin: 0 auto; max-width: 520px;
+  position: fixed; left: 0; right: 0;
   top: env(safe-area-inset-top, 0px); bottom: env(safe-area-inset-bottom, 0px);
   user-select: none; -webkit-user-select: none;
 }
@@ -431,8 +431,7 @@ function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
   cvs.width = Math.round(W * DPR); cvs.height = Math.round(H * DPR);
   // YouTube asks for an embedded player of at least 200x200 px; 16:9 at 200 tall is 356 wide.
-  let mw = Math.min(W - 24, 560), mh = Math.max(200, mw * 9 / 16), my = 10;
-  mw = Math.max(mw, 356);
+  const mw = Math.min(W - 24, 560), mh = Math.max(200, mw * 9 / 16), my = 10;   // narrow screens letterbox the MV
   const mx = (W - mw) / 2;
   MV = { x: mx, y: my, w: mw, h: mh, bottom: my + mh };
   Object.assign(ui.mvWrap.style, { left: mx + "px", top: my + "px", width: mw + "px", height: mh + "px" });
@@ -912,12 +911,12 @@ function finish(dnf) {
   if (race) race.pos = pos;
   const fc = stats.counts.miss === 0 && stats.judged > 0;
   lastRun = { diff, score: stats.score, acc: Math.round(acc * 10000) / 100, combo: stats.maxCombo, fc, submitted: !!dnf, dnf: !!dnf };
-  $("rPos").textContent = dnf ? "DNF" : "P" + pos;
   const ap = fc && stats.counts.green === 0 && stats.counts.yellow === 0, rank = rankOf(stats.score);
-  $("rRank").textContent = dnf ? "" : rank; $("rRank").hidden = dnf;
+  $("rPos").textContent = dnf ? "DNF" : rank;
+  $("rRank").hidden = true;
   const badge = $("rBadge");
-  badge.hidden = dnf || !(fc || pos <= 3);
-  badge.textContent = ap ? "ALL PURPLE" : fc ? "FULL COMBO" : "PODIUM";
+  badge.hidden = dnf || !fc;
+  badge.textContent = ap ? "ALL PURPLE" : "FULL COMBO";
   if (!dnf) {                                        // best rank / FC / AP on this device, shown on the class buttons
     const rk = `st-rec-${diff}`, old = store.get(rk, null), order = RANKS.map(r => r[1]);
     const better = !old || order.indexOf(rank) < order.indexOf(old.rank);
@@ -1259,8 +1258,8 @@ function drawRace(now) {
   if (!race || !live()) return;
   const t = performance.now() / 1000;
   g.save();
-  // overtake toast above the track
-  if (race.toast && t - race.toast.at < 1.4) {
+  // (no position or overtake messages: the screen shows the score only)
+  if (false) {
     const k = (t - race.toast.at) / 1.4;
     g.globalAlpha = 1 - k * k; g.textAlign = "center"; g.textBaseline = "middle";
     g.font = `italic 800 ${Math.round(Math.min(30, W * 0.065))}px ${FONT}`;
@@ -1293,7 +1292,7 @@ function drawRace(now) {
     g.globalAlpha = a; g.textAlign = "center"; g.textBaseline = "middle";
     g.font = `italic 800 ${Math.round(Math.min(48, W * 0.09))}px ${FONT}`;
     g.fillStyle = "#fff"; g.shadowColor = PINK; g.shadowBlur = 20;
-    g.fillText(`P${race.pos} · CHEQUERED FLAG`, G.cx, y0 + rows * cell + 40);
+    g.fillText("CHEQUERED FLAG", G.cx, y0 + rows * cell + 40);
   }
   g.restore();
 }
@@ -1554,25 +1553,18 @@ function drawHud(now) {
   if (!live()) return;
   const pad = 14, top = G.hudRow;
   g.save();
-  g.textBaseline = "top"; g.textAlign = "left";
-  const sx = 62;
-  g.font = `700 11px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.55)";
-  g.fillText("SCORE", sx, top);
-  g.font = `italic 800 24px ${FONT}`; g.fillStyle = "#fff";
-  g.fillText(fmtScore(stats.score), sx, top + 13);
+  // score: big, in the middle (between the pause button and the speedometer)
+  g.textBaseline = "top"; g.textAlign = "center";
+  const sx = W / 2 - 4, room = W - 2 * 84;
+  g.font = `700 10px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.55)";
+  g.fillText("SCORE", sx, top - 2);
+  g.font = `italic 800 ${Math.round(Math.max(26, Math.min(40, room * 0.2)))}px ${FONT}`; g.fillStyle = "#fff";
+  g.shadowColor = stats.combo >= 50 ? PINK : team.glow; g.shadowBlur = 10;
+  g.fillText(fmtScore(stats.score), sx, top + 10);
+  g.shadowBlur = 0;
   const acc = stats.judged ? (stats.pts / (stats.judged * 100)) * 100 : 100;
-  g.font = `700 12px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.6)";
-  g.fillText(`ACC ${acc.toFixed(2)}%`, sx, top + 40);
-  if (race) {
-    const px = W / 2 - 20, py = top + 4;
-    g.textAlign = "center";
-    g.font = `italic 800 30px ${FONT}`; g.fillStyle = race.pos <= 3 ? "#ffd21f" : "#fff";
-    g.fillText(`P${race.pos}`, px, py);
-    const pw = g.measureText(`P${race.pos}`).width;
-    g.font = `700 12px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.55)";
-    g.textAlign = "left"; g.fillText("/20", px + pw / 2 + 8, py + 14);
-    g.textAlign = "left";
-  }
+  g.font = `700 11px ${FONT}`; g.fillStyle = "rgba(255,255,255,0.6)";
+  g.fillText(`ACC ${acc.toFixed(2)}%`, sx, top + 50);
   const target = 150 + Math.min(stats.combo, 84) * 2.5 + (zoneAt(now) ? (zoneAt(now).mul - 1) * 120 : 0);
   speed += (target - speed) * 0.06;
   const r = 30, cx = W - pad - r - 4, cy = top + r + 2;
